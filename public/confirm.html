@@ -106,6 +106,16 @@
             return fromHash || '';
         };
 
+        const getReadableError = () => {
+            const description = getMergedParam('error_description');
+            if (!description) return '';
+            try {
+                return decodeURIComponent(description.replace(/\+/g, ' '));
+            } catch {
+                return description;
+            }
+        };
+
         function showSuccess() {
             content.innerHTML = `
                 <h2>Email Terkonfirmasi</h2>
@@ -129,9 +139,9 @@
         }
 
         async function verifyEmailLink() {
-            const linkError = getMergedParam('error_description');
+            const linkError = getReadableError();
             if (linkError) {
-                throw new Error(decodeURIComponent(linkError.replace(/\+/g, ' ')));
+                throw new Error(linkError);
             }
 
             const code = getMergedParam('code');
@@ -142,11 +152,22 @@
             }
 
             const tokenHash = getMergedParam('token_hash');
-            const linkType = getMergedParam('type');
+            const linkType = getMergedParam('type').toLowerCase();
             if (tokenHash && linkType) {
                 const { error } = await client.auth.verifyOtp({
                     token_hash: tokenHash,
                     type: normalizeVerifyType(linkType),
+                });
+                if (error) throw error;
+                return true;
+            }
+
+            const accessToken = getMergedParam('access_token');
+            const refreshToken = getMergedParam('refresh_token');
+            if (accessToken && refreshToken) {
+                const { error } = await client.auth.setSession({
+                    access_token: accessToken,
+                    refresh_token: refreshToken,
                 });
                 if (error) throw error;
                 return true;

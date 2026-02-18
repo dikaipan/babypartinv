@@ -166,8 +166,9 @@ export default function UsersPage() {
 
         setSendingReset(true);
         try {
+            const baseUrl = Platform.OS === 'web' ? window.location.origin : 'https://babypartinv.pages.dev';
             const { error: resetError } = await supabase.auth.resetPasswordForEmail(targetEmail, {
-                redirectTo: 'https://babypartreset.pages.dev/',
+                redirectTo: `${baseUrl}/reset-password.html`,
             });
             if (resetError) throw resetError;
             setSuccess(`Email reset password berhasil dikirim ke ${targetEmail}.`);

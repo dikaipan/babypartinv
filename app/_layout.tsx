@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { PaperProvider } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
-import { View, ActivityIndicator, StyleSheet, Platform, LogBox } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform, LogBox, ScrollView, FlatList, SectionList, VirtualizedList, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -11,6 +11,21 @@ import { useAuthStore } from '../src/stores/authStore';
 import { initOneSignal } from '../src/config/onesignal';
 import { getQueryClient } from '../src/config/queryClient';
 
+const hideScrollIndicatorsByDefault = (Component: any) => {
+    Component.defaultProps = {
+        ...(Component.defaultProps || {}),
+        showsVerticalScrollIndicator: false,
+        showsHorizontalScrollIndicator: false,
+    };
+};
+
+if (Platform.OS === 'android') {
+    hideScrollIndicatorsByDefault(ScrollView);
+    hideScrollIndicatorsByDefault(FlatList);
+    hideScrollIndicatorsByDefault(SectionList);
+    hideScrollIndicatorsByDefault(VirtualizedList);
+}
+
 
 
 export default function RootLayout() {
@@ -18,6 +33,7 @@ export default function RootLayout() {
     const segments = useSegments();
     const router = useRouter();
     const queryClient = getQueryClient();
+    const { width } = useWindowDimensions();
     const [fontsLoaded, fontError] = useFonts({
         // Serve icon font from public/ to avoid Cloudflare skipping assets under /assets/node_modules/.
         'material-community': '/fonts/MaterialCommunityIcons.ttf',
@@ -52,6 +68,7 @@ export default function RootLayout() {
 
     const isWeb = Platform.OS === 'web';
     const isAdmin = segments[0] === '(admin)';
+    const isWebMobile = isWeb && width < 768;
 
     useEffect(() => {
         if (!isWeb) return;
@@ -60,46 +77,77 @@ export default function RootLayout() {
         const doc = scope?.document as Document | undefined;
         if (!doc) return;
 
-        const styleId = 'admin-dark-scrollbar-style';
-        const existing = doc.getElementById(styleId);
-
-        if (!isAdmin) {
+        const adminStyleId = 'admin-dark-scrollbar-style';
+        const mobileStyleId = 'mobile-hide-scrollbar-style';
+        const removeStyle = (id: string) => {
+            const existing = doc.getElementById(id);
             if (existing) existing.remove();
-            return;
+        };
+        const upsertStyle = (id: string, cssText: string) => {
+            let styleEl = doc.getElementById(id) as HTMLStyleElement | null;
+            if (!styleEl) {
+                styleEl = doc.createElement('style');
+                styleEl.id = id;
+                doc.head.appendChild(styleEl);
+            }
+            if (styleEl.textContent !== cssText) {
+                styleEl.textContent = cssText;
+            }
+        };
+
+        if (isWebMobile) {
+            removeStyle(adminStyleId);
+            upsertStyle(mobileStyleId, `
+                html,
+                body,
+                #root,
+                #expo-root {
+                    scrollbar-width: none;
+                    -ms-overflow-style: none;
+                }
+                * {
+                    scrollbar-width: none;
+                    -ms-overflow-style: none;
+                }
+                *::-webkit-scrollbar {
+                    width: 0 !important;
+                    height: 0 !important;
+                    display: none;
+                }
+            `);
+        } else if (isAdmin) {
+            removeStyle(mobileStyleId);
+            upsertStyle(adminStyleId, `
+                * {
+                    scrollbar-width: thin;
+                    scrollbar-color: #2B3A4E #0B1320;
+                }
+                *::-webkit-scrollbar {
+                    width: 10px;
+                    height: 10px;
+                }
+                *::-webkit-scrollbar-track {
+                    background: #0B1320;
+                }
+                *::-webkit-scrollbar-thumb {
+                    background-color: #2B3A4E;
+                    border-radius: 8px;
+                    border: 2px solid #0B1320;
+                }
+                *::-webkit-scrollbar-corner {
+                    background: #0B1320;
+                }
+            `);
+        } else {
+            removeStyle(adminStyleId);
+            removeStyle(mobileStyleId);
         }
 
-        if (existing) return;
-
-        const styleEl = doc.createElement('style');
-        styleEl.id = styleId;
-        styleEl.textContent = `
-            * {
-                scrollbar-width: thin;
-                scrollbar-color: #2B3A4E #0B1320;
-            }
-            *::-webkit-scrollbar {
-                width: 10px;
-                height: 10px;
-            }
-            *::-webkit-scrollbar-track {
-                background: #0B1320;
-            }
-            *::-webkit-scrollbar-thumb {
-                background-color: #2B3A4E;
-                border-radius: 8px;
-                border: 2px solid #0B1320;
-            }
-            *::-webkit-scrollbar-corner {
-                background: #0B1320;
-            }
-        `;
-        doc.head.appendChild(styleEl);
-
         return () => {
-            const activeStyle = doc.getElementById(styleId);
-            if (activeStyle) activeStyle.remove();
+            removeStyle(adminStyleId);
+            removeStyle(mobileStyleId);
         };
-    }, [isWeb, isAdmin]);
+    }, [isWeb, isAdmin, isWebMobile]);
 
     useEffect(() => {
         if (!isWeb) return;

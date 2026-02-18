@@ -847,13 +847,13 @@ export default function ReportsPage() {
                                 clr: Colors.primary,
                             },
                             {
-                                icon: 'timer-alert-outline',
+                                icon: 'alert-circle-outline',
                                 val: slaRiskCount,
                                 label: 'SLA Terancam',
                                 clr: Colors.accent,
                             },
                             {
-                                icon: 'package-variant-closed-alert',
+                                icon: 'package-variant-remove',
                                 val: criticalPartCount,
                                 label: 'Part Critical',
                                 clr: Colors.danger,

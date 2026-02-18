@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions } from 'react-native';
-import { Text, IconButton } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -11,7 +11,49 @@ import { useUnreadCount } from '../../src/hooks/useUnreadCount';
 import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
-import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
+
+type DashboardRequestRow = {
+    id: string;
+    status: string | null;
+    engineer_id: string | null;
+    submitted_at: string | null;
+    reviewed_at: string | null;
+    delivered_at: string | null;
+    confirmed_at: string | null;
+    cancelled_at: string | null;
+};
+
+type DashboardUsageRow = {
+    id: string;
+    engineer_id: string | null;
+    so_number: string | null;
+    date: string | null;
+};
+
+type DashboardNotificationRow = {
+    id: string;
+    title: string | null;
+    body: string | null;
+    created_at: string | null;
+    is_read: boolean | null;
+};
+
+type DashboardProfileRow = {
+    id: string;
+    name: string | null;
+    role: string | null;
+};
+
+type DashboardActivity = {
+    id: string;
+    source: 'request' | 'usage' | 'notification';
+    title: string;
+    description: string;
+    timestamp: string;
+    icon: string;
+    color: string;
+    route: string;
+};
 
 type DashboardStats = {
     totalUsers: number;
@@ -22,26 +64,225 @@ type DashboardStats = {
 
 type DashboardData = {
     stats: DashboardStats;
-    kpi: Record<string, unknown> | null;
+    recentActivities: DashboardActivity[];
 };
 
 const EMPTY_STATS: DashboardStats = { totalUsers: 0, admins: 0, engineers: 0, notifications: 0 };
 
+const safeTimestamp = (value: string | null | undefined): number => {
+    const t = value ? new Date(value).getTime() : NaN;
+    return Number.isFinite(t) ? t : 0;
+};
+
+const shortId = (value: string | null | undefined): string => {
+    if (!value) return '-';
+    if (value.length <= 12) return value;
+    return `${value.slice(0, 6)}...${value.slice(-4)}`;
+};
+
+const isNonNull = <T,>(value: T | null): value is T => value !== null;
+
+const engineerDisplayName = (engineerId: string | null, engineerNameMap: Map<string, string>): string => {
+    if (!engineerId) return 'Engineer tidak diketahui';
+    const displayName = engineerNameMap.get(engineerId);
+    if (displayName && displayName.trim()) return displayName.trim();
+    return `Engineer ${shortId(engineerId)}`;
+};
+
+const formatActivityTime = (value: string): string => {
+    const time = safeTimestamp(value);
+    if (!time) return '-';
+
+    const diffMs = Date.now() - time;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'Baru saja';
+    if (diffMin < 60) return `${diffMin} mnt lalu`;
+
+    const diffHour = Math.floor(diffMin / 60);
+    if (diffHour < 24) return `${diffHour} jam lalu`;
+
+    const diffDay = Math.floor(diffHour / 24);
+    if (diffDay < 7) return `${diffDay} hari lalu`;
+
+    return new Date(time).toLocaleString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+};
+
+const buildRequestActivity = (
+    row: DashboardRequestRow,
+    engineerNameMap: Map<string, string>
+): DashboardActivity | null => {
+    const status = row.status || 'pending';
+    const engineerText = engineerDisplayName(row.engineer_id, engineerNameMap);
+
+    if (status === 'approved') {
+        const timestamp = row.reviewed_at || row.submitted_at;
+        if (!timestamp) return null;
+        return {
+            id: row.id,
+            source: 'request',
+            title: 'Request disetujui',
+            description: `${engineerText} sudah disetujui admin.`,
+            timestamp,
+            icon: 'check-decagram-outline',
+            color: Colors.info,
+            route: '/(admin)/review',
+        };
+    }
+
+    if (status === 'rejected') {
+        const timestamp = row.reviewed_at || row.submitted_at;
+        if (!timestamp) return null;
+        return {
+            id: row.id,
+            source: 'request',
+            title: 'Request ditolak',
+            description: `${engineerText} ditolak saat proses review.`,
+            timestamp,
+            icon: 'close-octagon-outline',
+            color: Colors.danger,
+            route: '/(admin)/review',
+        };
+    }
+
+    if (status === 'delivered') {
+        const timestamp = row.delivered_at || row.reviewed_at || row.submitted_at;
+        if (!timestamp) return null;
+        return {
+            id: row.id,
+            source: 'request',
+            title: 'Barang dikirim',
+            description: `Request ${engineerText} sudah berstatus delivered.`,
+            timestamp,
+            icon: 'truck-delivery-outline',
+            color: Colors.primary,
+            route: '/(admin)/review',
+        };
+    }
+
+    if (status === 'completed') {
+        const timestamp = row.confirmed_at || row.delivered_at || row.reviewed_at || row.submitted_at;
+        if (!timestamp) return null;
+        return {
+            id: row.id,
+            source: 'request',
+            title: 'Request selesai',
+            description: `${engineerText} sudah konfirmasi penerimaan.`,
+            timestamp,
+            icon: 'package-check',
+            color: Colors.success,
+            route: '/(admin)/review',
+        };
+    }
+
+    if (status === 'cancelled') {
+        const timestamp = row.cancelled_at || row.submitted_at;
+        if (!timestamp) return null;
+        return {
+            id: row.id,
+            source: 'request',
+            title: 'Request dibatalkan',
+            description: `${engineerText} membatalkan request.`,
+            timestamp,
+            icon: 'cancel',
+            color: Colors.textMuted,
+            route: '/(admin)/review',
+        };
+    }
+
+    const timestamp = row.submitted_at;
+    if (!timestamp) return null;
+    return {
+        id: row.id,
+        source: 'request',
+        title: 'Request baru',
+        description: `${engineerText} membuat request baru (pending).`,
+        timestamp,
+        icon: 'clock-outline',
+        color: Colors.accent,
+        route: '/(admin)/review',
+    };
+};
+
 const fetchDashboardData = async (): Promise<DashboardData> => {
-    const [usersRes, notifRes, kpiRes] = await Promise.all([
-        supabase.from('profiles').select('role', { count: 'exact' }),
+    const [usersRes, notifRes, requestFeedRes, usageFeedRes, notificationFeedRes] = await Promise.all([
+        supabase.from('profiles').select('id, name, role', { count: 'exact' }),
         supabase.from('notifications').select('id', { count: 'exact' }).eq('is_read', false),
-        supabase.rpc('admin_kpi_summary'),
+        supabase
+            .from('monthly_requests')
+            .select('id, status, engineer_id, submitted_at, reviewed_at, delivered_at, confirmed_at, cancelled_at')
+            .order('submitted_at', { ascending: false })
+            .limit(20),
+        supabase
+            .from('usage_reports')
+            .select('id, engineer_id, so_number, date')
+            .order('date', { ascending: false })
+            .limit(20),
+        supabase
+            .from('notifications')
+            .select('id, title, body, created_at, is_read')
+            .order('created_at', { ascending: false })
+            .limit(20),
     ]);
 
     if (usersRes.error) throw usersRes.error;
     if (notifRes.error) throw notifRes.error;
-    if (kpiRes.error) throw kpiRes.error;
+    if (requestFeedRes.error) throw requestFeedRes.error;
+    if (usageFeedRes.error) throw usageFeedRes.error;
+    if (notificationFeedRes.error) throw notificationFeedRes.error;
 
-    const profiles = usersRes.data || [];
+    const profiles = (usersRes.data || []) as DashboardProfileRow[];
+    const engineerNameMap = new Map(
+        profiles
+            .filter((p) => p.role === 'engineer')
+            .map((p) => [p.id, p.name || ''])
+    );
     const admins = profiles.filter((p: any) => p.role === 'admin').length;
     const engineers = profiles.filter((p: any) => p.role === 'engineer').length;
-    const kpi = kpiRes.data ? (Array.isArray(kpiRes.data) ? kpiRes.data[0] : kpiRes.data) : null;
+
+    const requestActivities = ((requestFeedRes.data || []) as DashboardRequestRow[])
+        .map((row) => buildRequestActivity(row, engineerNameMap))
+        .filter(isNonNull);
+
+    const usageActivities = ((usageFeedRes.data || []) as DashboardUsageRow[])
+        .map((row) => {
+            if (!row.date) return null;
+            return {
+                id: row.id,
+                source: 'usage' as const,
+                title: 'Laporan pemakaian baru',
+                description: `SO ${row.so_number || '-'} dari ${engineerDisplayName(row.engineer_id, engineerNameMap)}.`,
+                timestamp: row.date,
+                icon: 'clipboard-text-clock-outline',
+                color: Colors.primary,
+                route: '/(admin)/analitik',
+            };
+        })
+        .filter(isNonNull);
+
+    const notificationActivities = ((notificationFeedRes.data || []) as DashboardNotificationRow[])
+        .map((row) => {
+            if (!row.created_at) return null;
+            return {
+                id: row.id,
+                source: 'notification' as const,
+                title: row.title || 'Notifikasi baru',
+                description: row.body || (row.is_read ? 'Notifikasi sudah dibaca.' : 'Notifikasi belum dibaca.'),
+                timestamp: row.created_at,
+                icon: row.is_read ? 'bell-outline' : 'bell-ring-outline',
+                color: row.is_read ? Colors.textSecondary : '#EC4899',
+                route: '/notifications',
+            };
+        })
+        .filter(isNonNull);
+
+    const recentActivities = [...requestActivities, ...usageActivities, ...notificationActivities]
+        .sort((a, b) => safeTimestamp(b.timestamp) - safeTimestamp(a.timestamp))
+        .slice(0, 10);
 
     return {
         stats: {
@@ -50,7 +291,7 @@ const fetchDashboardData = async (): Promise<DashboardData> => {
             engineers,
             notifications: notifRes.count || 0,
         },
-        kpi,
+        recentActivities,
     };
 };
 
@@ -62,9 +303,6 @@ export default function DashboardPage() {
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
     const isWide = width >= 768;
-    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
-    const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
-    const effectiveWidth = width - sidebarWidth;
 
     const dashboardQuery = useQuery({
         queryKey: ['admin', 'dashboard'],
@@ -73,7 +311,7 @@ export default function DashboardPage() {
     });
 
     const stats = dashboardQuery.data?.stats || EMPTY_STATS;
-    const kpi = dashboardQuery.data?.kpi || null;
+    const recentActivities = dashboardQuery.data?.recentActivities || [];
 
     const greeting = () => {
         const h = new Date().getHours();
@@ -105,8 +343,6 @@ export default function DashboardPage() {
             setRefreshing(false);
         }
     };
-
-    const cardWidth = isWide ? (effectiveWidth - 40) / 4 - 16 : (width - 48) / 2 - 8;
 
     const statCards = [
         { label: 'Total Users', value: stats.totalUsers, icon: 'account-group' as const, color: Colors.primary },
@@ -183,22 +419,40 @@ export default function DashboardPage() {
                 </View>
             </View>
 
-            {/* KPI Summary */}
-            {kpi && (
-                <View style={styles.section}>
-                    <View style={styles.sectionHeader}>
-                        <Text style={styles.sectionTitle}>KPI Summary</Text>
-                    </View>
-                    <View style={styles.kpiGrid}>
-                        {Object.entries(kpi).map(([key, val], i) => (
-                            <View key={i} style={styles.kpiCard}>
-                                <Text style={styles.kpiValue}>{String(val)}</Text>
-                                <Text style={styles.kpiLabel}>{key.replace(/_/g, ' ')}</Text>
-                            </View>
-                        ))}
-                    </View>
+            {/* Recent Activity */}
+            <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>Recent Activity</Text>
                 </View>
-            )}
+                <View style={styles.activityList}>
+                    {recentActivities.length === 0 ? (
+                        <View style={styles.activityEmpty}>
+                            <MaterialCommunityIcons name="history" size={36} color={Colors.textMuted} />
+                            <Text style={styles.activityEmptyText}>Belum ada aktivitas terbaru.</Text>
+                        </View>
+                    ) : (
+                        recentActivities.map((activity) => (
+                            <Pressable
+                                key={`${activity.source}-${activity.id}`}
+                                style={styles.activityCard}
+                                onPress={() => router.push(activity.route as any)}
+                            >
+                                <View style={[styles.activityIcon, { backgroundColor: activity.color + '15' }]}>
+                                    <MaterialCommunityIcons name={activity.icon as any} size={20} color={activity.color} />
+                                </View>
+                                <View style={styles.activityContent}>
+                                    <Text style={styles.activityTitle} numberOfLines={1}>{activity.title}</Text>
+                                    <Text style={styles.activityDesc} numberOfLines={2}>{activity.description}</Text>
+                                </View>
+                                <View style={styles.activityMeta}>
+                                    <Text style={styles.activityTime}>{formatActivityTime(activity.timestamp)}</Text>
+                                    <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+                                </View>
+                            </Pressable>
+                        ))
+                    )}
+                </View>
+            </View>
             </ScrollView>
             <AppSnackbar visible={!!error} onDismiss={() => setError('')} duration={3000} style={{ backgroundColor: Colors.danger }}>
                 {error}
@@ -250,12 +504,39 @@ const styles = StyleSheet.create({
     actionDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
     actionArrow: { marginLeft: 8 },
 
-    // KPI Section
-    kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-    kpiCard: {
-        backgroundColor: Colors.surface, borderRadius: 16, padding: 16,
-        borderWidth: 1, borderColor: Colors.border, minWidth: 160, flex: 1,
+    // Recent Activity Section
+    activityList: { gap: 10 },
+    activityCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        backgroundColor: Colors.card,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        padding: 14,
     },
-    kpiValue: { fontSize: 24, fontWeight: '700', color: Colors.primary },
-    kpiLabel: { fontSize: 12, color: Colors.textSecondary, marginTop: 4, textTransform: 'capitalize' },
+    activityIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    activityContent: { flex: 1, gap: 2 },
+    activityTitle: { fontSize: 14, fontWeight: '700', color: Colors.text },
+    activityDesc: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
+    activityMeta: { alignItems: 'flex-end', gap: 4, marginLeft: 6 },
+    activityTime: { fontSize: 11, color: Colors.textMuted, fontWeight: '600' },
+    activityEmpty: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.surface,
+        borderColor: Colors.border,
+        borderWidth: 1,
+        borderRadius: 14,
+        paddingVertical: 28,
+        gap: 8,
+    },
+    activityEmptyText: { fontSize: 13, color: Colors.textMuted },
 });

@@ -7,16 +7,34 @@ import { useAuthStore } from '../../src/stores/authStore';
 export default function AdminAkunPage() {
     const { user, signOut } = useAuthStore();
     const initials = (user?.name || '?').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    const profileRows = [
+        { key: 'name', icon: 'account-outline', label: 'Nama', value: user?.name || '-' },
+        { key: 'id', icon: 'badge-account-outline', label: 'ID Karyawan', value: user?.employee_id || '-' },
+        { key: 'email', icon: 'email-outline', label: 'Email', value: user?.email || '-' },
+        { key: 'role', icon: 'shield-account-outline', label: 'Role', value: 'ADMIN' },
+    ];
 
     return (
         <View style={styles.container}>
             <Text style={styles.title}>Akun</Text>
             <View style={styles.profileSection}>
                 <View style={styles.avatar}><Text style={styles.avatarText}>{initials}</Text></View>
-                <Text style={styles.name}>{user?.name}</Text>
-                <Text style={styles.id}>ID: {user?.employee_id || '-'}</Text>
-                <Text style={styles.email}>{user?.email}</Text>
                 <View style={styles.roleBadge}><Text style={styles.roleText}>ADMIN</Text></View>
+            </View>
+
+            <View style={styles.infoCard}>
+                {profileRows.map((item, idx) => (
+                    <View
+                        key={item.key}
+                        style={[styles.infoRow, idx !== profileRows.length - 1 && styles.infoRowDivider]}
+                    >
+                        <View style={styles.infoLeft}>
+                            <MaterialCommunityIcons name={item.icon as any} size={16} color={Colors.textSecondary} />
+                            <Text style={styles.infoLabel}>{item.label}</Text>
+                        </View>
+                        <Text style={styles.infoValue} numberOfLines={1}>{item.value}</Text>
+                    </View>
+                ))}
             </View>
 
             <View style={styles.actions}>
@@ -49,11 +67,27 @@ const styles = StyleSheet.create({
         justifyContent: 'center', alignItems: 'center', marginBottom: 16,
     },
     avatarText: { fontSize: 32, fontWeight: '700', color: Colors.primary },
-    name: { fontSize: 22, fontWeight: '700', color: Colors.text },
-    id: { fontSize: 14, color: Colors.primary, marginTop: 4 },
-    email: { fontSize: 14, color: Colors.textSecondary, marginTop: 4 },
     roleBadge: { backgroundColor: Colors.info + '20', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginTop: 12 },
     roleText: { fontSize: 12, fontWeight: '700', color: Colors.info },
+    infoCard: {
+        marginTop: 20,
+        backgroundColor: Colors.card,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+    },
+    infoRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 13,
+        gap: 12,
+    },
+    infoRowDivider: { borderBottomWidth: 1, borderBottomColor: Colors.border },
+    infoLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
+    infoLabel: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
+    infoValue: { flex: 1, textAlign: 'right', fontSize: 13, color: Colors.text, fontWeight: '600' },
     actions: { marginTop: 32 },
     actionCard: {
         flexDirection: 'row', alignItems: 'center', gap: 14,

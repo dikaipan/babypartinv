@@ -412,7 +412,7 @@ export default function UsersPage() {
                             </View>
                             <ScrollView
                                 style={styles.modalScroll}
-                                showsVerticalScrollIndicator={true}
+                                showsVerticalScrollIndicator={false}
                                 indicatorStyle="black"
                                 keyboardShouldPersistTaps="handled"
                                 contentContainerStyle={styles.modalContent}

@@ -1,4 +1,4 @@
-import { StyleProp, StyleSheet, ViewStyle } from 'react-native';
+import { Platform, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 import { Portal, Snackbar as PaperSnackbar, SnackbarProps, Text, useTheme } from 'react-native-paper';
 
 type AppSnackbarProps = Omit<SnackbarProps, 'wrapperStyle'> & {
@@ -11,22 +11,37 @@ export default function AppSnackbar({ style, wrapperStyle, ...props }: AppSnackb
     const content = typeof props.children === 'string'
         ? <Text style={[styles.message, { color: textColor }]}>{props.children}</Text>
         : props.children;
+    const snackbarNode = (
+        <PaperSnackbar
+            {...props}
+            contentStyle={styles.content}
+            wrapperStyle={[styles.wrapper, wrapperStyle]}
+            style={[styles.snackbar, style]}
+        >
+            {content}
+        </PaperSnackbar>
+    );
+
+    if (Platform.OS === 'web') {
+        return (
+            <View pointerEvents="box-none" style={styles.webHost}>
+                {snackbarNode}
+            </View>
+        );
+    }
 
     return (
         <Portal>
-            <PaperSnackbar
-                {...props}
-                contentStyle={styles.content}
-                wrapperStyle={[styles.wrapper, wrapperStyle]}
-                style={[styles.snackbar, style]}
-            >
-                {content}
-            </PaperSnackbar>
+            {snackbarNode}
         </Portal>
     );
 }
 
 const styles = StyleSheet.create({
+    webHost: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 9999,
+    },
     wrapper: {
         alignItems: 'center',
         paddingHorizontal: 16,

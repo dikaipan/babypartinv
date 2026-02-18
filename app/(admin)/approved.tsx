@@ -68,11 +68,50 @@ function hasAdjustedQty(items: DeliveryAdjustment[]) {
     return items.some((item) => item.deliverQty !== item.requestedQty);
 }
 
+function areAdjustmentListsEqual(a: DeliveryAdjustment[] | undefined, b: DeliveryAdjustment[] | undefined) {
+    const left = a || [];
+    const right = b || [];
+    if (left.length !== right.length) return false;
+
+    for (let i = 0; i < left.length; i += 1) {
+        const l = left[i];
+        const r = right[i];
+        if (!r) return false;
+        if (
+            l.partId !== r.partId ||
+            l.requestedQty !== r.requestedQty ||
+            l.deliverQty !== r.deliverQty
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function areAdjustmentMapsEqual(
+    a: Record<string, DeliveryAdjustment[]>,
+    b: Record<string, DeliveryAdjustment[]>,
+) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+
+    for (const key of aKeys) {
+        if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+        if (!areAdjustmentListsEqual(a[key], b[key])) return false;
+    }
+
+    return true;
+}
+
 function toDeliveredItems(items: DeliveryAdjustment[]) {
     return items
         .filter((item) => item.deliverQty > 0)
         .map((item) => ({ partId: item.partId, quantity: item.deliverQty }));
 }
+
+const EMPTY_APPROVED_REQUESTS: (MonthlyRequest & { engineer?: Profile })[] = [];
 
 const fetchApprovedRequests = async (): Promise<(MonthlyRequest & { engineer?: Profile })[]> => {
     const { data, error } = await supabase
@@ -103,7 +142,7 @@ export default function ApprovedPage() {
         queryFn: fetchApprovedRequests,
         enabled: !!user,
     });
-    const requests = approvedQuery.data || [];
+    const requests = approvedQuery.data ?? EMPTY_APPROVED_REQUESTS;
 
     const resolveAreaGroup = useCallback((request: MonthlyRequest & { engineer?: Profile }) => {
         const location = request.engineer?.location;
@@ -119,7 +158,7 @@ export default function ApprovedPage() {
                 const normalized = buildAdjustments((row.items as RequestItem[]) || [], prevDraft);
                 if (hasAdjustedQty(normalized)) next[row.id] = normalized;
             }
-            return next;
+            return areAdjustmentMapsEqual(prev, next) ? prev : next;
         });
     }, [requests]);
 

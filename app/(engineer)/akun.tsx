@@ -24,8 +24,8 @@ export default function AkunPage() {
                 const result = await syncPushIdentity(user.id, { requestPermission: false });
                 if (!active) return;
                 if (!result.supported) {
-                    setOneSignalId('Web Browser (Not supported)');
-                    setPushToken('Web Browser (Not supported)');
+                    setOneSignalId('Push service not available');
+                    setPushToken('Push service not available');
                     return;
                 }
 
@@ -52,9 +52,9 @@ export default function AkunPage() {
         try {
             const result = await syncPushIdentity(user.id);
             if (!result.supported) {
-                setOneSignalId('Web Browser (Not supported)');
-                setPushToken('Web Browser (Not supported)');
-                setSyncMessage('Push identity tidak didukung pada web browser.');
+                setOneSignalId('Push service not available');
+                setPushToken('Push service not available');
+                setSyncMessage('Push identity tidak tersedia di device/browser ini.');
                 return;
             }
 
@@ -62,7 +62,7 @@ export default function AkunPage() {
             setPushToken(result.pushToken || 'No push token');
             setSyncMessage(
                 result.permissionGranted
-                    ? 'Push identity tersinkron. Android siap menerima push.'
+                    ? 'Push identity tersinkron. Device/browser siap menerima push.'
                     : 'Sinkron selesai, tapi izin notifikasi belum aktif.',
             );
         } catch (e: any) {

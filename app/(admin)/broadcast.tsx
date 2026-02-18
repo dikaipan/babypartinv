@@ -7,7 +7,7 @@ import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
 
 const ONESIGNAL_APP_ID = 'e71e2327-736b-4a58-a55f-c3d4f7358018';
-const ONESIGNAL_REST_API_KEY = 'os_v2_app_44pcgj3tnnffrjk7ypkponmadbmbjyurx6ruhsf5hkhcqmspf4677d5jz5kce7gj2ije7byibcmxawp2c7htx7aj2i3n74h47je2o6y';
+const ONESIGNAL_REST_API_KEY = 'os_v2_app_44pcgj3tnnffrjk7ypkponmaddojnejae2neejnhpjymisc4252ylnzkx2gmmun6n7xskoegtuwg6pwhmf3hnhd2vrfng2fostbd76y';
 
 export default function BroadcastPage() {
     const [title, setTitle] = useState('');
@@ -172,14 +172,26 @@ async function fireOneSignalPush(title: string, body: string, target: string, us
         setTimeout(() => reject(new Error('Push timeout (10s)')), 10000)
     );
 
-    const request = fetch('https://onesignal.com/api/v1/notifications', {
+    const request = fetch('https://api.onesignal.com/notifications?c=push', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json; charset=utf-8',
-            'Authorization': `Basic ${ONESIGNAL_REST_API_KEY}`,
+            'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`,
         },
         body: JSON.stringify(payload),
-    }).then(r => r.json());
+    }).then(async (r) => {
+        const text = await r.text();
+        let json: any = {};
+        try {
+            json = text ? JSON.parse(text) : {};
+        } catch {
+            json = { raw: text };
+        }
+        if (!r.ok) {
+            throw new Error(`[OneSignal ${r.status}] ${JSON.stringify(json)}`);
+        }
+        return json;
+    });
 
     const result = await Promise.race([request, timeout]);
     console.log('[Push] OneSignal result:', result);

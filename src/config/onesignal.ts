@@ -4,21 +4,82 @@ import { Platform } from 'react-native';
 // Replace with your OneSignal App ID
 const ONESIGNAL_APP_ID = 'e71e2327-736b-4a58-a55f-c3d4f7358018';
 
+type OneSignalWebPushSubscription = {
+    id?: string | null;
+    token?: string | null;
+    optedIn?: boolean;
+    optIn?: () => void | Promise<void>;
+};
+
+type OneSignalWebSdk = {
+    init: (config: Record<string, any>) => void | Promise<void>;
+    login?: (externalUserId: string) => void | Promise<void>;
+    logout?: () => void | Promise<void>;
+    Notifications?: {
+        permission?: boolean;
+        requestPermission?: () => boolean | Promise<boolean>;
+    };
+    User?: {
+        PushSubscription?: OneSignalWebPushSubscription;
+        pushSubscription?: OneSignalWebPushSubscription;
+    };
+};
+
+let oneSignalWebInitPromise: Promise<OneSignalWebSdk> | null = null;
+let oneSignalWebInitialized = false;
+
+const getWebPushSubscription = (sdk: OneSignalWebSdk): OneSignalWebPushSubscription | undefined =>
+    sdk.User?.PushSubscription || sdk.User?.pushSubscription;
+
+const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
+    if (Platform.OS !== 'web') {
+        throw new Error('OneSignal web SDK hanya tersedia di web.');
+    }
+
+    if (oneSignalWebInitPromise) {
+        return oneSignalWebInitPromise;
+    }
+
+    oneSignalWebInitPromise = new Promise<OneSignalWebSdk>((resolve, reject) => {
+        const win = window as any;
+        win.OneSignalDeferred = win.OneSignalDeferred || [];
+        win.OneSignalDeferred.push(async (oneSignalSdk: OneSignalWebSdk) => {
+            try {
+                if (!oneSignalWebInitialized) {
+                    await oneSignalSdk.init({
+                        appId: ONESIGNAL_APP_ID,
+                        allowLocalhostAsSecureOrigin: true,
+                    });
+                    oneSignalWebInitialized = true;
+                }
+                resolve(oneSignalSdk);
+            } catch (error) {
+                reject(error);
+            }
+        });
+
+        const existingScript = document.getElementById('onesignal-web-sdk');
+        if (!existingScript) {
+            const script = document.createElement('script');
+            script.id = 'onesignal-web-sdk';
+            script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+            script.defer = true;
+            script.onerror = () => reject(new Error('Gagal memuat OneSignal Web SDK.'));
+            document.head.appendChild(script);
+        }
+    }).catch((error) => {
+        oneSignalWebInitPromise = null;
+        throw error;
+    });
+
+    return oneSignalWebInitPromise;
+};
+
 export const initOneSignal = () => {
     if (Platform.OS === 'web') {
-        const script = document.createElement('script');
-        script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
-        script.defer = true;
-        script.onload = () => {
-            const OneSignalWeb = (window as any).OneSignal || [];
-            OneSignalWeb.push(() => {
-                OneSignalWeb.init({
-                    appId: ONESIGNAL_APP_ID,
-                    allowLocalhostAsSecureOrigin: true,
-                });
-            });
-        };
-        document.head.appendChild(script);
+        void ensureOneSignalWebSdk().catch((error) => {
+            console.warn('[OneSignal.web] Init failed:', error);
+        });
         return;
     }
 
@@ -53,20 +114,36 @@ export async function syncPushIdentity(
         throw new Error('User ID untuk sinkronisasi push tidak valid.');
     }
 
+    const shouldRequestPermission = options?.requestPermission ?? true;
+
     if (Platform.OS === 'web') {
+        const oneSignalWeb = await ensureOneSignalWebSdk();
+        if (typeof oneSignalWeb.login === 'function') {
+            await oneSignalWeb.login(externalUserId);
+        }
+
+        let permissionGranted = !!oneSignalWeb.Notifications?.permission;
+        if (!permissionGranted && shouldRequestPermission && typeof oneSignalWeb.Notifications?.requestPermission === 'function') {
+            const granted = await oneSignalWeb.Notifications.requestPermission();
+            permissionGranted = !!granted || !!oneSignalWeb.Notifications?.permission;
+        }
+
+        const pushSubscription = getWebPushSubscription(oneSignalWeb);
+        if (permissionGranted && typeof pushSubscription?.optIn === 'function') {
+            await pushSubscription.optIn();
+        }
+
         return {
-            supported: false,
+            supported: true,
             platform: 'web',
-            oneSignalId: null,
-            pushToken: null,
-            optedIn: false,
-            permissionGranted: false,
+            oneSignalId: pushSubscription?.id || null,
+            pushToken: pushSubscription?.token || null,
+            optedIn: !!pushSubscription?.optedIn,
+            permissionGranted: !!permissionGranted,
         };
     }
 
     OneSignal.login(externalUserId);
-
-    const shouldRequestPermission = options?.requestPermission ?? true;
     let permissionGranted = await OneSignal.Notifications.getPermissionAsync();
     if (!permissionGranted && shouldRequestPermission) {
         const canRequest = await OneSignal.Notifications.canRequestPermission();
@@ -93,9 +170,25 @@ export async function syncPushIdentity(
     };
 }
 
+export const logoutPushIdentity = async () => {
+    if (Platform.OS === 'web') {
+        try {
+            const oneSignalWeb = await ensureOneSignalWebSdk();
+            if (typeof oneSignalWeb.logout === 'function') {
+                await oneSignalWeb.logout();
+            }
+        } catch (error) {
+            console.warn('[OneSignal.web] Logout skipped:', error);
+        }
+        return;
+    }
+
+    OneSignal.logout();
+};
+
 /* ─── Client-side Notification Sending (Not recommended for public apps, okay for internal admin) ─── */
-const ONESIGNAL_REST_API_KEY = 'os_v2_app_44pcgj3tnnffrjk7ypkponmadbmbjyurx6ruhsf5hkhcqmspf4677d5jz5kce7gj2ije7byibcmxawp2c7htx7aj2i3n74h47je2o6y';
-const ONESIGNAL_API_URL = 'https://onesignal.com/api/v1/notifications';
+const ONESIGNAL_REST_API_KEY = 'os_v2_app_44pcgj3tnnffrjk7ypkponmaddojnejae2neejnhpjymisc4252ylnzkx2gmmun6n7xskoegtuwg6pwhmf3hnhd2vrfng2fostbd76y';
+const ONESIGNAL_API_URL = 'https://api.onesignal.com/notifications?c=push';
 
 interface NotificationPayload {
     headings: { en: string };
@@ -147,7 +240,7 @@ export const sendNotification = async (
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json; charset=utf-8',
-                'Authorization': `Basic ${ONESIGNAL_REST_API_KEY}`,
+                'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`,
             },
             body: JSON.stringify(payload),
             signal: controller.signal,

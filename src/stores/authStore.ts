@@ -2,8 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../config/supabase';
 import { Profile, UserRole } from '../types';
 import { normalizeArea } from '../utils/normalizeArea';
-import { syncPushIdentity } from '../config/onesignal';
-import { OneSignal } from 'react-native-onesignal';
+import { syncPushIdentity, logoutPushIdentity } from '../config/onesignal';
 import { Platform } from 'react-native';
 import type { User } from '@supabase/supabase-js';
 
@@ -164,13 +163,9 @@ export const useAuthStore = create<AuthState>((set, get) => {
                 ...(markInitialized ? { initialized: true } : {}),
             });
 
-            if (Platform.OS !== 'web') {
-                OneSignal.login(session.user.id);
-                OneSignal.User.pushSubscription.optIn();
-                void syncPushIdentity(session.user.id, { requestPermission: false }).catch((e) => {
-                    console.warn('[auth.syncProfileForSession] Auto push identity sync failed:', e);
-                });
-            }
+            void syncPushIdentity(session.user.id, { requestPermission: false }).catch((e) => {
+                console.warn('[auth.syncProfileForSession] Auto push identity sync failed:', e);
+            });
         } catch (error) {
             console.error('[auth.syncProfileForSession] Failed to sync profile:', error);
             set({
@@ -441,9 +436,7 @@ export const useAuthStore = create<AuthState>((set, get) => {
         signOut: async () => {
             await supabase.auth.signOut();
             set({ session: null, user: null, isRecovery: false });
-            if (Platform.OS !== 'web') {
-                OneSignal.logout();
-            }
+            await logoutPushIdentity();
         },
     };
 });

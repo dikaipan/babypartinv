@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, useWindowDimensions, Platform, UIManager, Share } from 'react-native';
 import { Text, Button, Chip } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
@@ -228,9 +228,8 @@ const fetchRequestStatusSummary = async (): Promise<RequestStatusSummary[]> => {
     );
 
     const results = await Promise.all(countQueries);
-    results.forEach((res, idx) => {
-        if (res.error) console.error(`monthly_requests count (${REQUEST_STATUS_ORDER[idx]}):`, res.error.message);
-    });
+    const failed = results.find((res) => res.error);
+    if (failed?.error) throw failed.error;
 
     return REQUEST_STATUS_ORDER.map((status, idx) => ({
         status,
@@ -329,6 +328,9 @@ export default function AnalitikPage() {
     const [exportingCsv, setExportingCsv] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+    const loadingRef = useRef(false);
+    const queuedReloadRef = useRef(false);
+    const debouncedReloadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const isWide = width >= 768;
     const effectiveWidth = isWide ? width - 240 : width;
@@ -342,6 +344,12 @@ export default function AnalitikPage() {
     );
 
     const load = useCallback(async () => {
+        if (loadingRef.current) {
+            queuedReloadRef.current = true;
+            return;
+        }
+
+        loadingRef.current = true;
         try {
             const [statusSummary, usageRowsRes, engineersRes] = await Promise.all([
                 fetchRequestStatusSummary(),
@@ -349,11 +357,8 @@ export default function AnalitikPage() {
                 supabase.from('profiles').select('id, name, employee_id').eq('role', 'engineer'),
             ]);
 
-            if (usageRowsRes.error) {
-                console.error('usage_reports query:', usageRowsRes.error.message);
-                setError(`Gagal memuat detail usage: ${usageRowsRes.error.message}`);
-            }
-            if (engineersRes.error) console.error('profiles query:', engineersRes.error.message);
+            if (usageRowsRes.error) throw usageRowsRes.error;
+            if (engineersRes.error) throw engineersRes.error;
 
             setRequestStatus(statusSummary);
 
@@ -370,15 +375,76 @@ export default function AnalitikPage() {
             setEngineers(engineers);
             setTopUsage(buildTopPartsByUsage(mappedUsageRows));
             setTopEngineersMonthly(buildTopEngineerMonthlyUsage(mappedUsageRows, engineers));
+            setError('');
         } catch (e: any) {
             console.error(e);
             setError(e.message || 'Terjadi kesalahan saat memuat data');
+        } finally {
+            loadingRef.current = false;
+            if (queuedReloadRef.current) {
+                queuedReloadRef.current = false;
+                void load();
+            }
         }
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
         load();
+    }, [load]);
+
+    useEffect(() => {
+        const scheduleReload = () => {
+            if (debouncedReloadRef.current) clearTimeout(debouncedReloadRef.current);
+            debouncedReloadRef.current = setTimeout(() => {
+                void load();
+            }, 500);
+        };
+
+        const channel = supabase
+            .channel('analytics-live')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'usage_reports' }, scheduleReload)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'monthly_requests' }, scheduleReload)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, scheduleReload)
+            .subscribe();
+
+        return () => {
+            if (debouncedReloadRef.current) clearTimeout(debouncedReloadRef.current);
+            supabase.removeChannel(channel);
+        };
+    }, [load]);
+
+    useEffect(() => {
+        if (Platform.OS !== 'web') return;
+
+        const scope = globalThis as any;
+        const doc = scope?.document as Document | undefined;
+
+        const refreshWhenVisible = () => {
+            if (!doc || doc.visibilityState === 'visible') {
+                void load();
+            }
+        };
+
+        const onVisibilityChange = () => {
+            if (doc?.visibilityState === 'visible') {
+                void load();
+            }
+        };
+
+        const onWindowFocus = () => {
+            void load();
+        };
+
+        const intervalId = setInterval(refreshWhenVisible, 45000);
+        doc?.addEventListener('visibilitychange', onVisibilityChange);
+        scope?.addEventListener?.('focus', onWindowFocus);
+
+        return () => {
+            clearInterval(intervalId);
+            doc?.removeEventListener('visibilitychange', onVisibilityChange);
+            scope?.removeEventListener?.('focus', onWindowFocus);
+        };
     }, [load]);
 
     const onRefresh = async () => {

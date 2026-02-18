@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { PaperProvider } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
-import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform, LogBox } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
 import { theme, Colors } from '../src/config/theme';
@@ -96,6 +96,42 @@ export default function RootLayout() {
             if (activeStyle) activeStyle.remove();
         };
     }, [isWeb, isAdmin]);
+
+    useEffect(() => {
+        if (!isWeb) return;
+
+        const ignoredWarnings = [
+            'Animated: `useNativeDriver` is not supported because the native animated module is missing.',
+            "Added non-passive event listener to a scroll-blocking 'wheel' event.",
+        ];
+
+        LogBox.ignoreLogs(ignoredWarnings);
+
+        const originalWarn = console.warn.bind(console);
+        const originalError = console.error.bind(console);
+
+        const shouldIgnore = (args: any[]) => {
+            const message = args
+                .map((arg) => (typeof arg === 'string' ? arg : ''))
+                .join(' ');
+            return ignoredWarnings.some((text) => message.includes(text));
+        };
+
+        console.warn = (...args: any[]) => {
+            if (shouldIgnore(args)) return;
+            originalWarn(...args);
+        };
+
+        console.error = (...args: any[]) => {
+            if (shouldIgnore(args)) return;
+            originalError(...args);
+        };
+
+        return () => {
+            console.warn = originalWarn;
+            console.error = originalError;
+        };
+    }, [isWeb]);
 
     if (!initialized || (!fontsLoaded && !fontError)) {
         return (

@@ -299,10 +299,19 @@ const normalizePushGatewayUrl = (rawUrl: string): string => {
     try {
         const parsed = new URL(trimmed);
         const plainSupabaseHost = parsed.hostname.match(/^([a-z0-9-]+)\.supabase\.co$/i);
-        const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+        const functionSupabaseHost = parsed.hostname.match(/^([a-z0-9-]+)\.functions\.supabase\.co$/i);
+        const normalizedPath = (parsed.pathname.replace(/\/+$/, '') || '/');
+
+        if (functionSupabaseHost && normalizedPath === '/push-gateway') {
+            parsed.hostname = `${functionSupabaseHost[1]}.supabase.co`;
+            parsed.pathname = '/functions/v1/push-gateway';
+            parsed.search = '';
+            return parsed.toString().replace(/\/$/, '');
+        }
 
         if (plainSupabaseHost && normalizedPath === '/push-gateway') {
-            parsed.hostname = `${plainSupabaseHost[1]}.functions.supabase.co`;
+            parsed.pathname = '/functions/v1/push-gateway';
+            parsed.search = '';
             return parsed.toString().replace(/\/$/, '');
         }
     } catch {

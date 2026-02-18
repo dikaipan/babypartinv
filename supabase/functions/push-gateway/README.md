@@ -20,12 +20,12 @@ supabase functions deploy push-gateway
 
 ## URL endpoint
 ```text
-https://<PROJECT_REF>.functions.supabase.co/push-gateway
+https://<PROJECT_REF>.supabase.co/functions/v1/push-gateway
 ```
 
 Set ke env app:
 ```text
-EXPO_PUBLIC_PUSH_GATEWAY_URL=https://<PROJECT_REF>.functions.supabase.co/push-gateway
+EXPO_PUBLIC_PUSH_GATEWAY_URL=https://<PROJECT_REF>.supabase.co/functions/v1/push-gateway
 ```
 
 ## Catatan auth

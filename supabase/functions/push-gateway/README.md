@@ -9,6 +9,10 @@ Function ini menerima request push dari app (pakai bearer token Supabase), lalu 
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ONESIGNAL_REST_API_KEY`
 
+## Secret opsional (direkomendasikan)
+- `ONESIGNAL_APP_ID`
+  - Jika diset, `appId` dari payload client akan diabaikan/ditolak bila tidak cocok.
+
 ## Deploy
 ```bash
 supabase functions deploy push-gateway
@@ -27,3 +31,5 @@ EXPO_PUBLIC_PUSH_GATEWAY_URL=https://<PROJECT_REF>.functions.supabase.co/push-ga
 ## Catatan auth
 - Wajib `Authorization: Bearer <access_token>`.
 - User non-admin tidak boleh kirim ke `included_segments`.
+- User non-admin tidak boleh kirim ke `include_player_ids`.
+- User non-admin hanya boleh kirim ke `external_id` milik dirinya sendiri atau akun admin (maks 20 target).

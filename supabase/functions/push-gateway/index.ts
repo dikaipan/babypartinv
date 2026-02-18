@@ -13,6 +13,17 @@ type PushRequest = {
     data?: unknown;
 };
 
+type OneSignalPayload = {
+    app_id: string;
+    headings: { en: string };
+    contents: { en: string };
+    data?: unknown;
+    include_aliases?: { external_id?: string[] };
+    include_player_ids?: string[];
+    included_segments?: string[];
+    target_channel?: 'push';
+};
+
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -43,19 +54,24 @@ const sanitizeIds = (value: unknown, maxItems: number) => {
         .slice(0, maxItems);
 };
 
-const buildOneSignalPayload = (req: PushRequest) => {
+const buildOneSignalPayload = (req: PushRequest, configuredAppId?: string): OneSignalPayload => {
     const headings = { en: normalizeText(req.title, 120) };
     const contents = { en: normalizeText(req.body, 2000) };
-    const appId = normalizeText(req.appId, 100);
+    const forcedAppId = normalizeText(configuredAppId, 100);
+    const requestAppId = normalizeText(req.appId, 100);
+    if (forcedAppId && requestAppId && requestAppId !== forcedAppId) {
+        throw new Error('appId payload tidak sesuai konfigurasi server.');
+    }
+    const appId = forcedAppId || requestAppId;
     const externalIds = sanitizeIds(req.include_aliases?.external_id, 2000);
     const playerIds = sanitizeIds(req.include_player_ids, 2000);
     const segments = sanitizeIds(req.included_segments, 20);
 
     if (!headings.en || !contents.en || !appId) {
-        throw new Error('Payload wajib berisi title, body, dan appId.');
+        throw new Error('Payload wajib berisi title dan body (appId dari env server atau request).');
     }
 
-    const payload: Record<string, unknown> = {
+    const payload: OneSignalPayload = {
         app_id: appId,
         headings,
         contents,
@@ -107,6 +123,7 @@ Deno.serve(async (req: Request) => {
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
     const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const oneSignalApiKey = Deno.env.get('ONESIGNAL_REST_API_KEY');
+    const oneSignalAppId = Deno.env.get('ONESIGNAL_APP_ID');
 
     if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey || !oneSignalApiKey) {
         return json(500, { error: 'Secret function belum lengkap di environment.' });
@@ -130,10 +147,10 @@ Deno.serve(async (req: Request) => {
         return json(401, { error: 'Token tidak valid.' });
     }
 
-    let payload: Record<string, unknown>;
+    let payload: OneSignalPayload;
     try {
         const body = (await req.json()) as PushRequest;
-        payload = buildOneSignalPayload(body);
+        payload = buildOneSignalPayload(body, oneSignalAppId);
     } catch (error) {
         return json(400, { error: error instanceof Error ? error.message : 'Payload tidak valid.' });
     }
@@ -146,9 +163,40 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
 
     const isAdmin = profile?.role === 'admin';
-    const hasSegments = Array.isArray((payload as { included_segments?: unknown }).included_segments);
-    if (hasSegments && !isAdmin) {
-        return json(403, { error: 'Hanya admin yang boleh kirim ke segments.' });
+    const targetExternalIds = sanitizeIds(payload.include_aliases?.external_id, 2000);
+    const hasSegments = Array.isArray(payload.included_segments) && payload.included_segments.length > 0;
+    const hasPlayerIds = Array.isArray(payload.include_player_ids) && payload.include_player_ids.length > 0;
+
+    if (!isAdmin) {
+        if (hasSegments || hasPlayerIds) {
+            return json(403, { error: 'Hanya admin yang boleh kirim ke segments/player_ids.' });
+        }
+
+        if (targetExternalIds.length === 0) {
+            return json(403, { error: 'User non-admin hanya boleh kirim ke external_id.' });
+        }
+
+        if (targetExternalIds.length > 20) {
+            return json(403, { error: 'Maksimal 20 penerima untuk non-admin.' });
+        }
+
+        const sendingToSelfOnly = targetExternalIds.length === 1 && targetExternalIds[0] === user.id;
+        if (!sendingToSelfOnly) {
+            const { data: targetProfiles, error: targetProfilesError } = await serviceClient
+                .from('profiles')
+                .select('id, role')
+                .in('id', targetExternalIds);
+
+            if (targetProfilesError) {
+                return json(500, { error: 'Gagal memverifikasi target notifikasi.' });
+            }
+
+            const targetById = new Map((targetProfiles || []).map((item) => [item.id, item.role]));
+            const hasInvalidTarget = targetExternalIds.some((targetId) => targetById.get(targetId) !== 'admin');
+            if (hasInvalidTarget) {
+                return json(403, { error: 'Non-admin hanya boleh kirim ke akun admin atau dirinya sendiri.' });
+            }
+        }
     }
 
     const oneSignalRes = await fetch('https://api.onesignal.com/notifications?c=push', {

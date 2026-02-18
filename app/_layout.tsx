@@ -54,15 +54,29 @@ export default function RootLayout() {
         }
 
         const inAuth = segments[0] === '(auth)';
+        const inAdmin = segments[0] === '(admin)';
+        const inEngineer = segments[0] === '(engineer)';
         // Keep user on protected routes while session is present but profile is still syncing.
         if (!user && !session && !inAuth) {
             router.replace('/(auth)/login');
-        } else if (user && inAuth) {
-            if (user.role === 'admin') {
-                router.replace('/(admin)/dashboard');
-            } else {
-                router.replace('/(engineer)/stok');
-            }
+            return;
+        }
+
+        if (!user) return;
+
+        if (inAuth) {
+            if (user.role === 'admin') router.replace('/(admin)/dashboard');
+            else router.replace('/(engineer)/stok');
+            return;
+        }
+
+        if (inAdmin && user.role !== 'admin') {
+            router.replace('/(engineer)/stok');
+            return;
+        }
+
+        if (inEngineer && user.role === 'admin') {
+            router.replace('/(admin)/dashboard');
         }
     }, [user, session, initialized, segments, isRecovery]);
 

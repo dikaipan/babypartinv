@@ -30,6 +30,13 @@ export default function AdminLayout() {
     const isWide = width >= 768;
 
     useEffect(() => {
+        if (!user) return;
+        if (user.role !== 'admin') {
+            router.replace('/(engineer)/stok');
+        }
+    }, [router, user]);
+
+    useEffect(() => {
         if (!isWide) {
             setSidebarOpen(false);
         } else if (!sidebarOpen) {

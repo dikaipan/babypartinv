@@ -345,12 +345,25 @@ export default function RequestPage() {
             return;
         }
 
-        let err;
         if (editingId) {
-            const { error } = await supabase.from('monthly_requests')
+            const { data: updatedRow, error: updateError } = await supabase.from('monthly_requests')
                 .update({ month: periodCode, items: selectedItems, submitted_at: new Date().toISOString() })
-                .eq('id', editingId);
-            err = error;
+                .eq('id', editingId)
+                .eq('engineer_id', user!.id)
+                .eq('status', 'pending')
+                .select('id')
+                .maybeSingle();
+
+            if (updateError) {
+                setError(updateError.message);
+                return;
+            }
+
+            if (!updatedRow) {
+                setError('Request tidak bisa diedit karena status sudah berubah.');
+                await refetchRequestData();
+                return;
+            }
         } else {
             const { error } = await supabase.from('monthly_requests').insert({
                 engineer_id: user!.id,
@@ -358,8 +371,13 @@ export default function RequestPage() {
                 items: selectedItems,
                 status: 'pending',
             });
-            err = error;
-            if (!err) {
+
+            if (error) {
+                setError(error.message);
+                return;
+            }
+
+            if (!error) {
                 void NotificationService.sendToRole(
                     'admin',
                     'New Request',
@@ -368,8 +386,6 @@ export default function RequestPage() {
                 ).catch((e) => console.error('[request.submit] Notification error:', e));
             }
         }
-
-        if (err) { setError(err.message); return; }
         setShowCreate(false);
         setStep('summary');
         setSearchQuery('');

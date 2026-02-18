@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "785626445538",
+    "project_id": "babypartinventory",
+    "storage_bucket": "babypartinventory.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:785626445538:android:4eb2b64d65d92d4bc290bb",
+        "android_client_info": {
+          "package_name": "com.babypart.inventory"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCt75xLZVGKWkwN1BVGMsrtrEecrjf2LM4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

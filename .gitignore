@@ -39,3 +39,12 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Sensitive Files
+*.json
+!app.json
+!package.json
+!tsconfig.json
+!google-services.json
+# Excluding the Firebase Admin SDK specifically
+babypartinv-*.json

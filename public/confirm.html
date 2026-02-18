@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Konfirmasi Email - BabyPart</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0A0F1A;
+            background-image:
+                radial-gradient(at 50% 100%, hsla(160, 50%, 10%, 1) 0, transparent 50%),
+                radial-gradient(at 50% 0%, hsla(225, 40%, 20%, 1) 0, transparent 50%);
+            color: #FFFFFF;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background: rgba(17, 24, 39, 0.8);
+            backdrop-filter: blur(12px);
+            padding: 3rem;
+            width: 100%;
+            max-width: 420px;
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .icon {
+            font-size: 3rem;
+            margin-bottom: 1.5rem;
+            animation: bounce 2s infinite;
+        }
+
+        @keyframes bounce {
+
+            0%,
+            20%,
+            50%,
+            80%,
+            100% {
+                transform: translateY(0);
+            }
+
+            40% {
+                transform: translateY(-20px);
+            }
+
+            60% {
+                transform: translateY(-10px);
+            }
+        }
+
+        h2 {
+            margin: 0 0 1rem;
+            font-weight: 700;
+            color: #10B981;
+            font-size: 1.75rem;
+        }
+
+        p {
+            color: #D1D5DB;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .btn {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            text-decoration: none;
+            padding: 0.875rem 2rem;
+            border-radius: 12px;
+            font-weight: 600;
+            transition: all 0.2s;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .loading {
+            color: #9CA3AF;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div id="content">
+            <div class="icon">⏳</div>
+            <h2>Memverifikasi...</h2>
+            <p class="loading">Mohon tunggu sebentar, kami sedang memvalidasi link email Anda.</p>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://karhcwuyppywmqmqppev.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imthcmhjd3V5cHB5d21xbXFwcGV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5NjE2MDgsImV4cCI6MjA4NjUzNzYwOH0.4kXfCrcsTtcxpS6IgoOstQXnGxWLrs7jCt00WU6sMTs';
+        const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const content = document.getElementById('content');
+
+        function showSuccess() {
+            content.innerHTML = `
+                <div class="icon">🎉</div>
+                <h2>Email Terkonfirmasi!</h2>
+                <p>Akun Anda telah berhasil diaktifkan. Sekarang Anda dapat login sepenuhnya ke aplikasi BabyPart Inventory.</p>
+                <a href="#" class="btn">Kembali ke Aplikasi</a>
+            `;
+        }
+
+        function showError(msg) {
+            content.innerHTML = `
+                <div class="icon">⚠️</div>
+                <h2 style="color:#EF4444">Gagal Verifikasi</h2>
+                <p>${msg}</p>
+                <a href="index.html" class="btn">Kembali ke Beranda</a>
+            `;
+        }
+
+        // Handle OAuth/MagicLink callback
+        supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_IN' || session) {
+                showSuccess();
+            } else if (event === 'SIGNED_OUT') {
+                // If checking hash manually fits better
+                const hash = window.location.hash;
+                if (hash && (hash.includes('access_token') || hash.includes('type=signup'))) {
+                    // Let Supabase process it, wait a bit
+                } else {
+                    // If no session and no hash, likely invalid access
+                    // However, sometimes purely visiting the link confirms it on server side
+                    // and redirects here without session if configured that way.
+                    // Ideally we want a session.
+
+                    // Fallback for direct visit without params
+                    if (!hash) {
+                        showError('Link tidak valid atau sesi kadaluarsa.');
+                    }
+                }
+            }
+        });
+
+        // Timeout safeguard
+        setTimeout(() => {
+            // If still "Memverifikasi..." after 3s, check session directly
+            supabase.auth.getSession().then(({ data: { session } }) => {
+                if (session) {
+                    showSuccess();
+                } else {
+                    // Check if URL has error params
+                    const params = new URLSearchParams(window.location.hash.substring(1)); // hash often has params
+                    const errorDescription = params.get('error_description');
+                    if (errorDescription) {
+                        showError(errorDescription.replace(/\+/g, ' '));
+                    }
+                }
+            });
+        }, 2000);
+    </script>
+</body>
+
+</html>

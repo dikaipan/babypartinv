@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BabyPart Inventory</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0A0F1A;
+            background-image:
+                radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%),
+                radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 1) 0, transparent 50%),
+                radial-gradient(at 100% 0%, hsla(339, 49%, 30%, 1) 0, transparent 50%);
+            color: #FFFFFF;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .container {
+            background: rgba(17, 24, 39, 0.7);
+            backdrop-filter: blur(10px);
+            padding: 3rem;
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+            max-width: 420px;
+            width: 90%;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            border-radius: 20px;
+            margin: 0 auto 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0 0 0.5rem;
+            background: linear-gradient(to right, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p {
+            color: #9CA3AF;
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+
+        .btn {
+            display: inline-block;
+            background: #10B981;
+            color: white;
+            text-decoration: none;
+            padding: 0.875rem 2rem;
+            border-radius: 12px;
+            font-weight: 600;
+            transition: all 0.2s;
+            box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);
+        }
+
+        .btn:hover {
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.4);
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        // Route Supabase auth callbacks to the correct page
+        (function () {
+            var hash = window.location.hash;
+            if (hash) {
+                if (hash.indexOf('type=recovery') !== -1) {
+                    window.location.replace('reset-password.html' + hash);
+                    return;
+                }
+                if (hash.indexOf('type=signup') !== -1 || hash.indexOf('type=email') !== -1) {
+                    window.location.replace('confirm.html' + hash);
+                    return;
+                }
+                if (hash.indexOf('error=') !== -1) {
+                    window.location.replace('confirm.html' + hash);
+                    return;
+                }
+            }
+        })();
+    </script>
+    <div class="container">
+        <div class="logo">📦</div>
+        <h1>BabyPart Inventory</h1>
+        <p>Platform manajemen inventaris pintar untuk tim engineer profesional. Kelola stok, request part, dan laporan
+            dalam satu aplikasi.</p>
+        <a href="#" class="btn">Download Aplikasi</a>
+    </div>
+</body>
+
+</html>

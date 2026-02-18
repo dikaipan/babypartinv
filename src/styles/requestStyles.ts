@@ -56,12 +56,66 @@ const styles = StyleSheet.create({
         borderWidth: 1, borderColor: Colors.primary + '40'
     },
     infoBoxValue: { fontSize: 13, fontWeight: '700', color: Colors.text },
+    infoBoxValueCount: { fontSize: 20, lineHeight: 22, color: Colors.primary },
     infoBoxLabel: { fontSize: 10, color: Colors.textMuted },
 
     // Items
-    itemsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 },
-    itemChip: { backgroundColor: '#1F2937', paddingHorizontal: 9, paddingVertical: 4, borderRadius: 14 },
-    itemText: { fontSize: 11, color: Colors.textSecondary },
+    itemsRow: { gap: 6, marginBottom: 12 },
+    itemRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 4,
+    },
+    itemText: {
+        fontSize: 12,
+        color: Colors.text,
+        fontWeight: '700',
+        letterSpacing: 0.2,
+        flex: 1,
+        marginRight: 10,
+    },
+    itemQtyText: {
+        fontSize: 14,
+        color: Colors.primary,
+        fontWeight: '800',
+    },
+    paginationRow: {
+        marginTop: 2,
+        marginBottom: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    paginationBtn: {
+        minWidth: 84,
+        height: 36,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        backgroundColor: '#1A2432',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 2,
+        paddingHorizontal: 10,
+    },
+    paginationBtnDisabled: {
+        opacity: 0.45,
+    },
+    paginationBtnText: {
+        color: Colors.text,
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    paginationInfo: {
+        flex: 1,
+        textAlign: 'center',
+        color: Colors.textSecondary,
+        fontSize: 12,
+        fontWeight: '600',
+    },
 
     // Actions
     actionRow: { flexDirection: 'row', gap: 8 },

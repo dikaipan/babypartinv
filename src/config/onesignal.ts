@@ -25,6 +25,16 @@ type OneSignalWebSdk = {
     };
 };
 
+type SyncPushIdentityResult = {
+    supported: boolean;
+    platform: string;
+    oneSignalId: string | null;
+    pushToken: string | null;
+    optedIn: boolean;
+    permissionGranted: boolean;
+    reason?: string;
+};
+
 let oneSignalWebInitPromise: Promise<OneSignalWebSdk> | null = null;
 let oneSignalWebInitialized = false;
 const ONE_SIGNAL_WEB_INIT_FLAG = '__babypartOneSignalWebInitialized';
@@ -41,6 +51,15 @@ const isSdkAlreadyInitializedError = (error: unknown) => {
 
 const getWebPushSubscription = (sdk: OneSignalWebSdk): OneSignalWebPushSubscription | undefined =>
     sdk.User?.PushSubscription || sdk.User?.pushSubscription;
+
+const isWebPushRuntimeSupported = (): boolean => {
+    if (Platform.OS !== 'web') return false;
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+    if (!window.isSecureContext) return false;
+    if (!('Notification' in window)) return false;
+    if (!('serviceWorker' in navigator)) return false;
+    return true;
+};
 
 const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
     if (Platform.OS !== 'web') {
@@ -96,6 +115,7 @@ const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
 
 export const initOneSignal = () => {
     if (Platform.OS === 'web') {
+        if (!isWebPushRuntimeSupported()) return;
         void ensureOneSignalWebSdk().catch((error) => {
             console.warn('[OneSignal.web] Init failed:', error);
         });
@@ -128,7 +148,7 @@ export const initOneSignal = () => {
 export async function syncPushIdentity(
     externalUserId: string,
     options?: { requestPermission?: boolean },
-) {
+): Promise<SyncPushIdentityResult> {
     if (!externalUserId) {
         throw new Error('User ID untuk sinkronisasi push tidak valid.');
     }
@@ -136,30 +156,63 @@ export async function syncPushIdentity(
     const shouldRequestPermission = options?.requestPermission ?? true;
 
     if (Platform.OS === 'web') {
-        const oneSignalWeb = await ensureOneSignalWebSdk();
-        if (typeof oneSignalWeb.login === 'function') {
-            await oneSignalWeb.login(externalUserId);
+        if (!isWebPushRuntimeSupported()) {
+            return {
+                supported: false,
+                platform: 'web',
+                oneSignalId: null,
+                pushToken: null,
+                optedIn: false,
+                permissionGranted: false,
+                reason: 'Web push tidak didukung di environment ini.',
+            };
         }
 
-        let permissionGranted = !!oneSignalWeb.Notifications?.permission;
-        if (!permissionGranted && shouldRequestPermission && typeof oneSignalWeb.Notifications?.requestPermission === 'function') {
-            const granted = await oneSignalWeb.Notifications.requestPermission();
-            permissionGranted = !!granted || !!oneSignalWeb.Notifications?.permission;
-        }
+        try {
+            const oneSignalWeb = await ensureOneSignalWebSdk();
+            if (typeof oneSignalWeb.login === 'function') {
+                await oneSignalWeb.login(externalUserId);
+            }
 
-        const pushSubscription = getWebPushSubscription(oneSignalWeb);
-        if (permissionGranted && typeof pushSubscription?.optIn === 'function') {
-            await pushSubscription.optIn();
-        }
+            let permissionGranted = !!oneSignalWeb.Notifications?.permission || Notification.permission === 'granted';
+            if (!permissionGranted && shouldRequestPermission && typeof oneSignalWeb.Notifications?.requestPermission === 'function') {
+                try {
+                    const granted = await oneSignalWeb.Notifications.requestPermission();
+                    permissionGranted = !!granted || !!oneSignalWeb.Notifications?.permission || Notification.permission === 'granted';
+                } catch (error) {
+                    console.warn('[OneSignal.web] requestPermission failed:', error);
+                }
+            }
 
-        return {
-            supported: true,
-            platform: 'web',
-            oneSignalId: pushSubscription?.id || null,
-            pushToken: pushSubscription?.token || null,
-            optedIn: !!pushSubscription?.optedIn,
-            permissionGranted: !!permissionGranted,
-        };
+            const pushSubscription = getWebPushSubscription(oneSignalWeb);
+            if (permissionGranted && typeof pushSubscription?.optIn === 'function') {
+                try {
+                    await pushSubscription.optIn();
+                } catch (error) {
+                    console.warn('[OneSignal.web] pushSubscription.optIn failed:', error);
+                }
+            }
+
+            return {
+                supported: true,
+                platform: 'web',
+                oneSignalId: pushSubscription?.id || null,
+                pushToken: pushSubscription?.token || null,
+                optedIn: !!pushSubscription?.optedIn,
+                permissionGranted: !!permissionGranted,
+            };
+        } catch (error) {
+            console.warn('[OneSignal.web] syncPushIdentity fallback:', error);
+            return {
+                supported: false,
+                platform: 'web',
+                oneSignalId: null,
+                pushToken: null,
+                optedIn: false,
+                permissionGranted: false,
+                reason: error instanceof Error ? error.message : 'Sinkronisasi OneSignal web gagal.',
+            };
+        }
     }
 
     OneSignal.login(externalUserId);

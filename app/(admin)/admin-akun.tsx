@@ -65,7 +65,8 @@ export default function AdminAkunPage() {
                     : 'Sinkron selesai, tapi izin notifikasi belum aktif.',
             );
         } catch (e: any) {
-            setSyncMessage(e?.message || 'Gagal sinkron push identity.');
+            console.warn('[AdminAkun] Sync push identity failed:', e);
+            setSyncMessage('Gagal sinkron push identity. Coba lagi beberapa saat.');
         } finally {
             setSyncingPush(false);
         }

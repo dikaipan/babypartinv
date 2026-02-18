@@ -21,6 +21,7 @@ import { NotificationService } from '../../src/services/NotificationService';
 
 const LOOPSHEET_MAX_QTY = 20;
 const DEFAULT_MAX_QTY = 10;
+const REQUEST_PAGE_SIZE = 5;
 
 const normalizePartToken = (value?: string) => (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const isLoopSheetPart = (partName?: string, partId?: string) => {
@@ -31,16 +32,75 @@ const isLoopSheetPart = (partName?: string, partId?: string) => {
 const getMaxQtyForPart = (partName?: string, partId?: string) => (
     isLoopSheetPart(partName, partId) ? LOOPSHEET_MAX_QTY : DEFAULT_MAX_QTY
 );
+const normalizeRequestStatus = (status: string) => {
+    const normalized = status.toLowerCase();
+    if (normalized === 'reject') return 'rejected';
+    if (normalized === 'complete') return 'completed';
+    return normalized;
+};
+const formatStatusLabel = (status: string) => {
+    const normalized = normalizeRequestStatus(status);
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
 
-const fetchEngineerRequests = async (engineerId: string): Promise<MonthlyRequest[]> => {
-    const { data, error } = await supabase
+type RequestListPage = {
+    rows: MonthlyRequest[];
+    total: number;
+};
+
+type RequestStats = {
+    total: number;
+    pending: number;
+};
+
+const fetchEngineerRequests = async (
+    engineerId: string,
+    filter: 'all' | RequestStatus,
+    page: number,
+    pageSize = REQUEST_PAGE_SIZE,
+): Promise<RequestListPage> => {
+    const start = Math.max(0, (page - 1) * pageSize);
+    const end = start + pageSize - 1;
+
+    let query = supabase
         .from('monthly_requests')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('engineer_id', engineerId)
-        .neq('status', 'cancelled')
-        .order('submitted_at', { ascending: false });
+        .neq('status', 'cancelled');
+
+    if (filter !== 'all') {
+        query = query.eq('status', filter);
+    }
+
+    const { data, error, count } = await query
+        .order('submitted_at', { ascending: false })
+        .range(start, end);
+
     if (error) throw error;
-    return data || [];
+    return { rows: data || [], total: count || 0 };
+};
+
+const fetchEngineerRequestStats = async (engineerId: string): Promise<RequestStats> => {
+    const [totalRes, pendingRes] = await Promise.all([
+        supabase
+            .from('monthly_requests')
+            .select('id', { count: 'exact', head: true })
+            .eq('engineer_id', engineerId)
+            .neq('status', 'cancelled'),
+        supabase
+            .from('monthly_requests')
+            .select('id', { count: 'exact', head: true })
+            .eq('engineer_id', engineerId)
+            .eq('status', 'pending'),
+    ]);
+
+    if (totalRes.error) throw totalRes.error;
+    if (pendingRes.error) throw pendingRes.error;
+
+    return {
+        total: totalRes.count || 0,
+        pending: pendingRes.count || 0,
+    };
 };
 
 const fetchInventoryParts = async (): Promise<InventoryPart[]> => {
@@ -55,6 +115,7 @@ export default function RequestPage() {
     const navigation = useNavigation<any>();
     const unreadCount = useUnreadCount();
     const [filter, setFilter] = useState<'all' | RequestStatus>('all');
+    const [page, setPage] = useState(1);
     const [refreshing, setRefreshing] = useState(false);
     const [showCreate, setShowCreate] = useState(false);
 
@@ -113,8 +174,13 @@ export default function RequestPage() {
     }, [navigation, showCreate, visibleTabStyle]);
 
     const requestsQuery = useQuery({
-        queryKey: ['engineer', 'requests', user?.id],
-        queryFn: () => fetchEngineerRequests(user!.id),
+        queryKey: ['engineer', 'requests', user?.id, filter, page],
+        queryFn: () => fetchEngineerRequests(user!.id, filter, page),
+        enabled: !!user?.id,
+    });
+    const requestStatsQuery = useQuery({
+        queryKey: ['engineer', 'request-stats', user?.id],
+        queryFn: () => fetchEngineerRequestStats(user!.id),
         enabled: !!user?.id,
     });
     const partsQuery = useQuery({
@@ -122,20 +188,33 @@ export default function RequestPage() {
         queryFn: fetchInventoryParts,
         enabled: !!user?.id,
     });
-    const requests = requestsQuery.data || [];
+    const requests = requestsQuery.data?.rows || [];
     const parts = partsQuery.data || [];
+    const total = requestStatsQuery.data?.total || 0;
+    const pendingCount = requestStatsQuery.data?.pending || 0;
+    const totalFiltered = requestsQuery.data?.total || 0;
+    const totalPages = Math.max(1, Math.ceil(totalFiltered / REQUEST_PAGE_SIZE));
+    const canGoPrev = page > 1;
+    const canGoNext = page < totalPages;
 
     useEffect(() => {
-        const sourceError = requestsQuery.error || partsQuery.error;
+        const sourceError = requestsQuery.error || requestStatsQuery.error || partsQuery.error;
         if (!sourceError) return;
         const message = sourceError instanceof Error ? sourceError.message : 'Gagal memuat data request.';
         setError(message);
-    }, [partsQuery.error, requestsQuery.error]);
+    }, [partsQuery.error, requestStatsQuery.error, requestsQuery.error]);
+
+    useEffect(() => {
+        if (page > totalPages) {
+            setPage(totalPages);
+        }
+    }, [page, totalPages]);
 
     useSupabaseRealtimeRefresh(
         ['monthly_requests'],
         () => {
             void requestsQuery.refetch();
+            void requestStatsQuery.refetch();
         },
         { enabled: !!user?.id },
     );
@@ -150,7 +229,7 @@ export default function RequestPage() {
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await requestsQuery.refetch();
+            await Promise.all([requestsQuery.refetch(), requestStatsQuery.refetch()]);
         } finally {
             setRefreshing(false);
         }
@@ -193,9 +272,9 @@ export default function RequestPage() {
         return () => subscription.remove();
     }, [showCreate, step]));
 
-    const filtered = filter === 'all' ? requests : requests.filter(r => r.status === filter);
-    const total = requests.length;
-    const pendingCount = requests.filter(r => r.status === 'pending').length;
+    const refetchRequestData = async () => {
+        await Promise.all([requestsQuery.refetch(), requestStatsQuery.refetch()]);
+    };
 
     const openCreate = async () => {
         await partsQuery.refetch();
@@ -298,7 +377,7 @@ export default function RequestPage() {
         setQty(1);
         setSuccess(editingId ? 'Request diperbarui!' : 'Request berhasil dibuat!');
         setEditingId(null);
-        await requestsQuery.refetch();
+        await refetchRequestData();
     };
 
     const cancelRequest = async (id: string) => {
@@ -313,7 +392,7 @@ export default function RequestPage() {
 
         if (!deleteError && deletedRows && deletedRows.length > 0) {
             setSuccess('Request dibatalkan');
-            await requestsQuery.refetch();
+            await refetchRequestData();
             return;
         }
 
@@ -359,7 +438,7 @@ export default function RequestPage() {
             `${user?.name} membatalkan request.`,
             { status: 'cancelled', type: 'request_progress' },
         ).catch((e) => console.error('[request.cancel] Notification error:', e));
-        await requestsQuery.refetch();
+        await refetchRequestData();
     };
 
     const confirmDelivery = async (id: string) => {
@@ -464,7 +543,7 @@ export default function RequestPage() {
                 `${user?.name} telah menerima barang.`,
                 { request_id: id, status: 'completed', type: 'request_progress' },
             ).catch((e) => console.error('[request.confirmDelivery] Notification error:', e));
-            await requestsQuery.refetch();
+            await refetchRequestData();
         } catch (e: any) {
             setError(e?.message || 'Gagal konfirmasi penerimaan.');
         } finally {
@@ -479,8 +558,8 @@ export default function RequestPage() {
         await confirmDelivery(requestId);
     };
 
-    const statusColor = (s: RequestStatus) => {
-        switch (s) {
+    const statusColor = (status: string) => {
+        switch (normalizeRequestStatus(status)) {
             case 'pending': return Colors.accent;
             case 'approved': return Colors.info;
             case 'delivered': return Colors.primary;
@@ -514,7 +593,7 @@ export default function RequestPage() {
     return (
         <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
             <FlatList
-                data={filtered}
+                data={requests}
                 keyExtractor={r => r.id}
                 refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
                 onScroll={webPull.onScroll}
@@ -563,7 +642,10 @@ export default function RequestPage() {
                         {/* Filter Pills */}
                         <View style={styles.filters}>
                             {(['all', 'pending', 'approved', 'delivered'] as const).map(f => (
-                                <Pressable key={f} onPress={() => setFilter(f)}
+                                <Pressable key={f} onPress={() => {
+                                    setFilter(f);
+                                    setPage(1);
+                                }}
                                     style={[styles.filterPill, filter === f && styles.filterPillActive]}>
                                     {filter === f && <MaterialCommunityIcons name="check" size={14} color="#FFF" style={{ marginRight: 4 }} />}
                                     <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
@@ -575,8 +657,12 @@ export default function RequestPage() {
                         <View style={{ height: 16 }} />
                     </>
                 }
-                renderItem={({ item: r }) => (
-                    <View style={styles.card}>
+                renderItem={({ item: r }) => {
+                    const currentStatus = normalizeRequestStatus(r.status);
+                    const currentStatusColor = statusColor(currentStatus);
+                    const currentStatusLabel = formatStatusLabel(currentStatus);
+                    return (
+                        <View style={styles.card}>
                         {/* Card Header & Content - SAME AS BEFORE */}
                         <View style={styles.cardHeader}>
                             <View style={styles.dateIcon}>
@@ -588,9 +674,9 @@ export default function RequestPage() {
                                     {new Date(r.submitted_at).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })} | {(r.items as RequestItem[]).length} Item
                                 </Text>
                             </View>
-                            <View style={[styles.statusBadge, { borderColor: statusColor(r.status), backgroundColor: statusColor(r.status) + '20' }]}>
-                                <Text style={[styles.statusText, { color: statusColor(r.status) }]}>
-                                    {r.status.charAt(0).toUpperCase() + r.status.slice(1)}
+                            <View style={[styles.statusBadge, { borderColor: currentStatusColor, backgroundColor: currentStatusColor + '20' }]}>
+                                <Text style={[styles.statusText, { color: currentStatusColor }]}>
+                                    {currentStatusLabel}
                                 </Text>
                             </View>
                         </View>
@@ -600,14 +686,14 @@ export default function RequestPage() {
                             <View style={styles.infoBox}>
                                 <MaterialCommunityIcons name="format-list-bulleted" size={14} color={Colors.primary} />
                                 <View>
-                                    <Text style={styles.infoBoxValue}>{(r.items as RequestItem[]).length}</Text>
+                                    <Text style={[styles.infoBoxValue, styles.infoBoxValueCount]}>{(r.items as RequestItem[]).length}</Text>
                                     <Text style={styles.infoBoxLabel}>Item</Text>
                                 </View>
                             </View>
-                            <View style={[styles.infoBox, { borderColor: Colors.accent + '40', backgroundColor: Colors.accent + '10' }]}>
-                                <MaterialCommunityIcons name="clock-outline" size={14} color={Colors.accent} />
+                            <View style={[styles.infoBox, { borderColor: currentStatusColor + '40', backgroundColor: currentStatusColor + '10' }]}>
+                                <MaterialCommunityIcons name="clock-outline" size={14} color={currentStatusColor} />
                                 <View>
-                                    <Text style={[styles.infoBoxValue, { color: Colors.accent }]}>{r.status.charAt(0).toUpperCase() + r.status.slice(1)}</Text>
+                                    <Text style={[styles.infoBoxValue, { color: currentStatusColor }]}>{currentStatusLabel}</Text>
                                     <Text style={styles.infoBoxLabel}>Status</Text>
                                 </View>
                             </View>
@@ -615,11 +701,15 @@ export default function RequestPage() {
 
                         {/* Items */}
                         <View style={styles.itemsRow}>
-                            {(r.items as RequestItem[]).map((item, idx) => (
-                                <View key={idx} style={styles.itemChip}>
-                                    <Text style={styles.itemText}>{item.partId} x{item.quantity}</Text>
-                                </View>
-                            ))}
+                            {(r.items as RequestItem[]).map((item, idx) => {
+                                const itemName = partNameById.get(item.partId) || item.partId;
+                                return (
+                                    <View key={`${item.partId}-${idx}`} style={styles.itemRow}>
+                                        <Text style={styles.itemText} numberOfLines={1}>{itemName}</Text>
+                                        <Text style={styles.itemQtyText}>Qty: {item.quantity}</Text>
+                                    </View>
+                                );
+                            })}
                         </View>
 
                         {/* Actions */}
@@ -653,8 +743,32 @@ export default function RequestPage() {
                                 </Pressable>
                             )}
                         </View>
-                    </View>
-                )}
+                        </View>
+                    );
+                }}
+                ListFooterComponent={
+                    totalFiltered > REQUEST_PAGE_SIZE ? (
+                        <View style={styles.paginationRow}>
+                            <Pressable
+                                onPress={() => setPage(prev => Math.max(1, prev - 1))}
+                                disabled={!canGoPrev || requestsQuery.isFetching}
+                                style={[styles.paginationBtn, (!canGoPrev || requestsQuery.isFetching) && styles.paginationBtnDisabled]}
+                            >
+                                <MaterialCommunityIcons name="chevron-left" size={16} color={Colors.text} />
+                                <Text style={styles.paginationBtnText}>Prev</Text>
+                            </Pressable>
+                            <Text style={styles.paginationInfo}>Halaman {page}/{totalPages}</Text>
+                            <Pressable
+                                onPress={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                                disabled={!canGoNext || requestsQuery.isFetching}
+                                style={[styles.paginationBtn, (!canGoNext || requestsQuery.isFetching) && styles.paginationBtnDisabled]}
+                            >
+                                <Text style={styles.paginationBtnText}>Next</Text>
+                                <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.text} />
+                            </Pressable>
+                        </View>
+                    ) : null
+                }
                 ListEmptyComponent={
                     <View style={styles.empty}>
                         <MaterialCommunityIcons name="clipboard-text-outline" size={48} color={Colors.textMuted} />

@@ -20,6 +20,7 @@ import { UsageReport, UsageItem, EngineerStock } from '../../src/types';
 type StockWithName = EngineerStock & { part_name?: string };
 const SO_NUMBER_MIN_DIGIT_LENGTH = 8; // YYYYMMDD
 const SO_NUMBER_MAX_DIGIT_LENGTH = 20;
+const USAGE_HISTORY_LIMIT = 5;
 const SO_NUMBER_PATTERN = new RegExp(`^\\d{${SO_NUMBER_MIN_DIGIT_LENGTH},${SO_NUMBER_MAX_DIGIT_LENGTH}}$`);
 
 const fetchEngineerUsageReports = async (engineerId: string): Promise<UsageReport[]> => {
@@ -28,7 +29,7 @@ const fetchEngineerUsageReports = async (engineerId: string): Promise<UsageRepor
         .select('*')
         .eq('engineer_id', engineerId)
         .order('date', { ascending: false })
-        .limit(20);
+        .limit(USAGE_HISTORY_LIMIT);
     if (error) throw error;
     return data || [];
 };
@@ -115,7 +116,7 @@ export default function PemakaianPage() {
         queryFn: () => fetchEngineerUsageStocks(user!.id),
         enabled: !!user?.id,
     });
-    const reports = reportsQuery.data || [];
+    const reports = useMemo(() => (reportsQuery.data || []).slice(0, USAGE_HISTORY_LIMIT), [reportsQuery.data]);
     const stocks = stocksQuery.data || [];
     const loadingStocks = stocksQuery.isFetching;
 

@@ -16,8 +16,8 @@ export default function RootLayout() {
     const segments = useSegments();
     const router = useRouter();
     const [fontsLoaded] = useFonts({
-        // Avoid Cloudflare path issues with "@expo/..." font asset paths on web exports.
-        'material-community': require('react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf'),
+        // Serve icon font from public/ to avoid Cloudflare skipping assets under /assets/node_modules/.
+        'material-community': '/fonts/MaterialCommunityIcons.ttf',
     });
 
     useEffect(() => {

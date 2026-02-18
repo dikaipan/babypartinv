@@ -10,6 +10,7 @@ import { InventoryPart } from '../../src/types';
 import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
+import { useDebounce } from '../../src/hooks/useDebounce';
 
 type StockEditorMode = 'adjust' | 'add';
 type SummaryFilter = 'all' | 'low' | 'out';
@@ -36,6 +37,7 @@ const fetchInventoryParts = async (): Promise<InventoryPart[]> => {
 export default function InventoryPage() {
     const { width } = useWindowDimensions();
     const [search, setSearch] = useState('');
+    const debouncedSearch = useDebounce(search, 300);
     const [refreshing, setRefreshing] = useState(false);
     const [showPartModal, setShowPartModal] = useState(false);
     const [editPart, setEditPart] = useState<InventoryPart | null>(null);
@@ -88,13 +90,14 @@ export default function InventoryPage() {
     };
 
     const searchedParts = useMemo(() => {
-        const keyword = search.trim().toLowerCase();
+        const keyword = debouncedSearch.trim().toLowerCase();
         if (!keyword) return parts;
         return parts.filter((part) =>
             part.part_name.toLowerCase().includes(keyword) ||
             part.id.toLowerCase().includes(keyword)
         );
-    }, [parts, search]);
+    }, [parts, debouncedSearch]);
+
     const filtered = useMemo(() => {
         if (summaryFilter === 'low') {
             return searchedParts.filter((part) => part.total_stock > 0 && part.total_stock <= part.min_stock);
@@ -134,6 +137,7 @@ export default function InventoryPage() {
         if (parts.length === 0) return 'Belum ada data inventory.';
         return 'Tidak ada part sesuai filter.';
     }, [parts.length]);
+
     const exportCsv = useCallback(async () => {
         if (filtered.length === 0 || exportingCsv) return;
 
@@ -333,6 +337,199 @@ export default function InventoryPage() {
         }
     };
 
+    // Memoized Header Component
+    const InventoryHeader = useMemo(() => (
+        <View>
+            <View style={styles.pageHeader}>
+                <Text style={adminStyles.headerTitle}>Inventory</Text>
+                <Text style={adminStyles.headerSub}>{parts.length} items | {lowCount} low stock | {outOfStockCount} out</Text>
+            </View>
+
+            <Searchbar
+                placeholder="Cari part atau kode..."
+                value={search}
+                onChangeText={setSearch}
+                style={[adminStyles.searchBar, styles.searchBarInList]}
+                inputStyle={{ color: Colors.text }}
+                iconColor={Colors.textMuted}
+                placeholderTextColor={Colors.textMuted}
+            />
+
+            <View style={styles.summaryWrap}>
+                <View style={styles.summaryHeader}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.summaryTitle}>Inventory Summary</Text>
+                        <Text style={styles.summarySubtitle}>
+                            Ringkasan cepat kondisi stok master inventory. Health {stockHealth}%.
+                        </Text>
+                    </View>
+                    <View style={styles.summaryHeaderActions}>
+                        <Button
+                            mode="contained"
+                            onPress={openAddPart}
+                            icon="plus"
+                            style={styles.addBtn}
+                            labelStyle={styles.addBtnText}
+                            compact
+                        >
+                            Add Part
+                        </Button>
+                        <Button
+                            mode="text"
+                            icon="download"
+                            onPress={exportCsv}
+                            loading={exportingCsv}
+                            disabled={exportingCsv || filtered.length === 0}
+                            compact
+                            labelStyle={styles.exportLabel}
+                            style={styles.exportBtn}
+                        >
+                            Export CSV
+                        </Button>
+                    </View>
+                </View>
+
+                <View style={styles.summaryRow}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryScroll}>
+                        <View style={[styles.summaryCard, styles.summaryCardPrimary]}>
+                            <MaterialCommunityIcons name="layers-triple-outline" size={16} color={Colors.primary} />
+                            <Text style={styles.summaryValue}>{parts.length}</Text>
+                            <Text style={styles.summaryLabel}>Total Part</Text>
+                        </View>
+                        <View style={[styles.summaryCard, styles.summaryCardPrimary]}>
+                            <MaterialCommunityIcons name="archive-outline" size={16} color={Colors.primary} />
+                            <Text style={styles.summaryValue}>{totalStock}</Text>
+                            <Text style={styles.summaryLabel}>Total Stock</Text>
+                        </View>
+                        <View style={[styles.summaryCard, styles.summaryCardWarning]}>
+                            <MaterialCommunityIcons name="alert-outline" size={16} color={Colors.accent} />
+                            <Text style={styles.summaryValue}>{lowCount}</Text>
+                            <Text style={styles.summaryLabel}>Low Stock</Text>
+                        </View>
+                        <View style={[styles.summaryCard, styles.summaryCardDanger]}>
+                            <MaterialCommunityIcons name="alert-circle-outline" size={16} color={Colors.danger} />
+                            <Text style={styles.summaryValue}>{outOfStockCount}</Text>
+                            <Text style={styles.summaryLabel}>Out of Stock</Text>
+                        </View>
+                        <View style={[styles.summaryCard, styles.summaryCardInfo]}>
+                            <MaterialCommunityIcons name="heart-pulse" size={16} color={Colors.info} />
+                            <Text style={styles.summaryValue}>{stockHealth}%</Text>
+                            <Text style={styles.summaryLabel}>Stock Health</Text>
+                        </View>
+                    </ScrollView>
+                </View>
+
+                <View style={styles.quickFilterRow}>
+                    <Chip
+                        compact
+                        mode={summaryFilter === 'all' ? 'flat' : 'outlined'}
+                        selected={summaryFilter === 'all'}
+                        onPress={() => setSummaryFilter('all')}
+                        style={[styles.quickChip, summaryFilter === 'all' && styles.quickChipActive]}
+                        textStyle={styles.quickChipText}
+                    >
+                        All ({searchedParts.length})
+                    </Chip>
+                    <Chip
+                        compact
+                        mode={summaryFilter === 'low' ? 'flat' : 'outlined'}
+                        selected={summaryFilter === 'low'}
+                        onPress={() => setSummaryFilter('low')}
+                        style={[styles.quickChip, summaryFilter === 'low' && styles.quickChipWarning]}
+                        textStyle={styles.quickChipText}
+                    >
+                        Low ({searchedLowCount})
+                    </Chip>
+                    <Chip
+                        compact
+                        mode={summaryFilter === 'out' ? 'flat' : 'outlined'}
+                        selected={summaryFilter === 'out'}
+                        onPress={() => setSummaryFilter('out')}
+                        style={[styles.quickChip, summaryFilter === 'out' && styles.quickChipDanger]}
+                        textStyle={styles.quickChipText}
+                    >
+                        Out ({searchedOutCount})
+                    </Chip>
+                    <View style={styles.quickBadge}>
+                        <MaterialCommunityIcons name="alert-circle-outline" size={14} color={Colors.textSecondary} />
+                        <Text style={styles.quickBadgeText}>Out total: {outOfStockCount}</Text>
+                    </View>
+                </View>
+            </View>
+        </View>
+    ), [
+        parts.length, lowCount, outOfStockCount, search, stockHealth,
+        totalStock, exportingCsv, filtered.length, summaryFilter,
+        searchedParts.length, searchedLowCount, searchedOutCount
+    ]);
+
+    const renderItem = useCallback(({ item: part }: { item: InventoryPart }) => {
+        const isOut = part.total_stock === 0;
+        const isLow = !isOut && part.total_stock <= part.min_stock;
+
+        return (
+            <View style={[styles.card, { width: isWide ? cardWidth : '100%' }]}>
+                <View style={styles.cardHeader}>
+                    <View style={[styles.dateIcon, isOut ? styles.dateIconOut : (isLow ? styles.dateIconLow : undefined)]}>
+                        <MaterialCommunityIcons
+                            name={isOut ? 'alert-circle' : (isLow ? 'alert-circle-outline' : 'cube-outline')}
+                            size={18}
+                            color={isOut ? Colors.danger : (isLow ? Colors.accent : Colors.primary)}
+                        />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.cardTitle}>{part.part_name}</Text>
+                        <Text style={styles.cardSubtitle}>ID: {part.id}</Text>
+                    </View>
+                    <View style={[styles.statusBadge, isOut ? styles.statusBadgeOut : (isLow ? styles.statusBadgeLow : styles.statusBadgeOk)]}>
+                        <Text style={[styles.statusText, { color: isOut ? Colors.danger : (isLow ? Colors.accent : Colors.primary) }]}>
+                            {isOut ? 'Out' : (isLow ? 'Low' : 'Tersedia')}
+                        </Text>
+                    </View>
+                </View>
+
+                <View style={styles.infoRow}>
+                    <View style={styles.infoBox}>
+                        <MaterialCommunityIcons name="cube-outline" size={14} color={Colors.primary} />
+                        <View>
+                            <Text style={styles.infoBoxValue}>{part.total_stock}</Text>
+                            <Text style={styles.infoBoxLabel}>Stok Admin</Text>
+                        </View>
+                    </View>
+                    <View style={[styles.infoBox, styles.infoBoxAlt]}>
+                        <MaterialCommunityIcons name="arrow-down" size={14} color={Colors.accent} />
+                        <View>
+                            <Text style={[styles.infoBoxValue, { color: Colors.accent }]}>{part.min_stock}</Text>
+                            <Text style={styles.infoBoxLabel}>Min</Text>
+                        </View>
+                    </View>
+                </View>
+
+                <View style={styles.stockActionRow}>
+                    <Pressable
+                        style={({ pressed }) => [styles.stockAdjustBtn, pressed && { opacity: 0.88 }]}
+                        onPress={() => openStockEditor(part, 'adjust')}
+                    >
+                        <MaterialCommunityIcons name="pencil-outline" size={18} color="#FFFFFF" />
+                        <Text style={styles.stockAdjustBtnText}>Koreksi</Text>
+                    </Pressable>
+                    <Pressable
+                        style={({ pressed }) => [styles.stockAddBtn, pressed && { opacity: 0.88 }]}
+                        onPress={() => openStockEditor(part, 'add')}
+                    >
+                        <MaterialCommunityIcons name="plus-circle-outline" size={18} color="#08362E" />
+                        <Text style={styles.stockAddBtnText}>Add</Text>
+                    </Pressable>
+                </View>
+
+                <Pressable style={styles.detailBtn} onPress={() => openEditPart(part)}>
+                    <MaterialCommunityIcons name="cog-outline" size={16} color={Colors.textSecondary} />
+                    <Text style={styles.detailBtnText}>Detail Part</Text>
+                </Pressable>
+            </View>
+        );
+    }, [isWide, cardWidth]); // openStockEditor and openEditPart are stable refs typically, or need to be included if they change
+
     return (
         <View style={adminStyles.container}>
             <FlatList
@@ -345,192 +542,12 @@ export default function InventoryPage() {
                 contentContainerStyle={adminStyles.scrollContent}
                 ItemSeparatorComponent={() => <View style={{ height: cardGap }} />}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-                ListHeaderComponent={
-                    <>
-                        <View style={styles.pageHeader}>
-                            <Text style={adminStyles.headerTitle}>Inventory</Text>
-                            <Text style={adminStyles.headerSub}>{parts.length} items | {lowCount} low stock | {outOfStockCount} out</Text>
-                        </View>
-
-                        <Searchbar
-                            placeholder="Cari part atau kode..."
-                            value={search}
-                            onChangeText={setSearch}
-                            style={[adminStyles.searchBar, styles.searchBarInList]}
-                            inputStyle={{ color: Colors.text }}
-                            iconColor={Colors.textMuted}
-                            placeholderTextColor={Colors.textMuted}
-                        />
-
-                        <View style={styles.summaryWrap}>
-                            <View style={styles.summaryHeader}>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.summaryTitle}>Inventory Summary</Text>
-                                    <Text style={styles.summarySubtitle}>
-                                        Ringkasan cepat kondisi stok master inventory. Health {stockHealth}%.
-                                    </Text>
-                                </View>
-                                <View style={styles.summaryHeaderActions}>
-                                    <Button
-                                        mode="contained"
-                                        onPress={openAddPart}
-                                        icon="plus"
-                                        style={styles.addBtn}
-                                        labelStyle={styles.addBtnText}
-                                        compact
-                                    >
-                                        Add Part
-                                    </Button>
-                                    <Button
-                                        mode="text"
-                                        icon="download"
-                                        onPress={exportCsv}
-                                        loading={exportingCsv}
-                                        disabled={exportingCsv || filtered.length === 0}
-                                        compact
-                                        labelStyle={styles.exportLabel}
-                                        style={styles.exportBtn}
-                                    >
-                                        Export CSV
-                                    </Button>
-                                </View>
-                            </View>
-
-                            <View style={styles.summaryRow}>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryScroll}>
-                                    <View style={[styles.summaryCard, styles.summaryCardPrimary]}>
-                                        <MaterialCommunityIcons name="layers-triple-outline" size={16} color={Colors.primary} />
-                                        <Text style={styles.summaryValue}>{parts.length}</Text>
-                                        <Text style={styles.summaryLabel}>Total Part</Text>
-                                    </View>
-                                    <View style={[styles.summaryCard, styles.summaryCardPrimary]}>
-                                        <MaterialCommunityIcons name="archive-outline" size={16} color={Colors.primary} />
-                                        <Text style={styles.summaryValue}>{totalStock}</Text>
-                                        <Text style={styles.summaryLabel}>Total Stock</Text>
-                                    </View>
-                                    <View style={[styles.summaryCard, styles.summaryCardWarning]}>
-                                        <MaterialCommunityIcons name="alert-outline" size={16} color={Colors.accent} />
-                                        <Text style={styles.summaryValue}>{lowCount}</Text>
-                                        <Text style={styles.summaryLabel}>Low Stock</Text>
-                                    </View>
-                                    <View style={[styles.summaryCard, styles.summaryCardDanger]}>
-                                        <MaterialCommunityIcons name="alert-circle-outline" size={16} color={Colors.danger} />
-                                        <Text style={styles.summaryValue}>{outOfStockCount}</Text>
-                                        <Text style={styles.summaryLabel}>Out of Stock</Text>
-                                    </View>
-                                    <View style={[styles.summaryCard, styles.summaryCardInfo]}>
-                                        <MaterialCommunityIcons name="heart-pulse" size={16} color={Colors.info} />
-                                        <Text style={styles.summaryValue}>{stockHealth}%</Text>
-                                        <Text style={styles.summaryLabel}>Stock Health</Text>
-                                    </View>
-                                </ScrollView>
-                            </View>
-
-                            <View style={styles.quickFilterRow}>
-                                <Chip
-                                    compact
-                                    mode={summaryFilter === 'all' ? 'flat' : 'outlined'}
-                                    selected={summaryFilter === 'all'}
-                                    onPress={() => setSummaryFilter('all')}
-                                    style={[styles.quickChip, summaryFilter === 'all' && styles.quickChipActive]}
-                                    textStyle={styles.quickChipText}
-                                >
-                                    All ({searchedParts.length})
-                                </Chip>
-                                <Chip
-                                    compact
-                                    mode={summaryFilter === 'low' ? 'flat' : 'outlined'}
-                                    selected={summaryFilter === 'low'}
-                                    onPress={() => setSummaryFilter('low')}
-                                    style={[styles.quickChip, summaryFilter === 'low' && styles.quickChipWarning]}
-                                    textStyle={styles.quickChipText}
-                                >
-                                    Low ({searchedLowCount})
-                                </Chip>
-                                <Chip
-                                    compact
-                                    mode={summaryFilter === 'out' ? 'flat' : 'outlined'}
-                                    selected={summaryFilter === 'out'}
-                                    onPress={() => setSummaryFilter('out')}
-                                    style={[styles.quickChip, summaryFilter === 'out' && styles.quickChipDanger]}
-                                    textStyle={styles.quickChipText}
-                                >
-                                    Out ({searchedOutCount})
-                                </Chip>
-                                <View style={styles.quickBadge}>
-                                    <MaterialCommunityIcons name="alert-circle-outline" size={14} color={Colors.textSecondary} />
-                                    <Text style={styles.quickBadgeText}>Out total: {outOfStockCount}</Text>
-                                </View>
-                            </View>
-                        </View>
-                    </>
-                }
-                renderItem={({ item: part }) => {
-                    const isOut = part.total_stock === 0;
-                    const isLow = !isOut && part.total_stock <= part.min_stock;
-
-                    return (
-                        <View style={[styles.card, { width: isWide ? cardWidth : '100%' }]}>
-                            <View style={styles.cardHeader}>
-                                <View style={[styles.dateIcon, isOut ? styles.dateIconOut : (isLow ? styles.dateIconLow : undefined)]}>
-                                    <MaterialCommunityIcons
-                                        name={isOut ? 'alert-circle' : (isLow ? 'alert-circle-outline' : 'cube-outline')}
-                                        size={18}
-                                        color={isOut ? Colors.danger : (isLow ? Colors.accent : Colors.primary)}
-                                    />
-                                </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.cardTitle}>{part.part_name}</Text>
-                                    <Text style={styles.cardSubtitle}>ID: {part.id}</Text>
-                                </View>
-                                <View style={[styles.statusBadge, isOut ? styles.statusBadgeOut : (isLow ? styles.statusBadgeLow : styles.statusBadgeOk)]}>
-                                    <Text style={[styles.statusText, { color: isOut ? Colors.danger : (isLow ? Colors.accent : Colors.primary) }]}>
-                                        {isOut ? 'Out' : (isLow ? 'Low' : 'Tersedia')}
-                                    </Text>
-                                </View>
-                            </View>
-
-                            <View style={styles.infoRow}>
-                                <View style={styles.infoBox}>
-                                    <MaterialCommunityIcons name="cube-outline" size={14} color={Colors.primary} />
-                                    <View>
-                                        <Text style={styles.infoBoxValue}>{part.total_stock}</Text>
-                                        <Text style={styles.infoBoxLabel}>Stok Admin</Text>
-                                    </View>
-                                </View>
-                                <View style={[styles.infoBox, styles.infoBoxAlt]}>
-                                    <MaterialCommunityIcons name="arrow-down" size={14} color={Colors.accent} />
-                                    <View>
-                                        <Text style={[styles.infoBoxValue, { color: Colors.accent }]}>{part.min_stock}</Text>
-                                        <Text style={styles.infoBoxLabel}>Min</Text>
-                                    </View>
-                                </View>
-                            </View>
-
-                            <View style={styles.stockActionRow}>
-                                <Pressable
-                                    style={({ pressed }) => [styles.stockAdjustBtn, pressed && { opacity: 0.88 }]}
-                                    onPress={() => openStockEditor(part, 'adjust')}
-                                >
-                                    <MaterialCommunityIcons name="pencil-outline" size={18} color="#FFFFFF" />
-                                    <Text style={styles.stockAdjustBtnText}>Koreksi</Text>
-                                </Pressable>
-                                <Pressable
-                                    style={({ pressed }) => [styles.stockAddBtn, pressed && { opacity: 0.88 }]}
-                                    onPress={() => openStockEditor(part, 'add')}
-                                >
-                                    <MaterialCommunityIcons name="plus-circle-outline" size={18} color="#08362E" />
-                                    <Text style={styles.stockAddBtnText}>Add</Text>
-                                </Pressable>
-                            </View>
-
-                            <Pressable style={styles.detailBtn} onPress={() => openEditPart(part)}>
-                                <MaterialCommunityIcons name="cog-outline" size={16} color={Colors.textSecondary} />
-                                <Text style={styles.detailBtnText}>Detail Part</Text>
-                            </Pressable>
-                        </View>
-                    );
-                }}
+                ListHeaderComponent={InventoryHeader}
+                renderItem={renderItem}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={11}
+                removeClippedSubviews={true}
                 ListEmptyComponent={
                     <View style={adminStyles.emptyState}>
                         <MaterialCommunityIcons name="package-variant-closed" size={48} color={Colors.textMuted} />

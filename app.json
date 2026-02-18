@@ -26,6 +26,10 @@
         "POST_NOTIFICATIONS"
       ]
     },
+    "notification": {
+      "icon": "./assets/logo.png",
+      "color": "#ffffff"
+    },
     "web": {
       "favicon": "./assets/logo.png",
       "bundler": "metro"
@@ -36,7 +40,10 @@
       [
         "onesignal-expo-plugin",
         {
-          "mode": "development"
+          "mode": "development",
+          "smallIcons": [
+            "./assets/logo.png"
+          ]
         }
       ]
     ]

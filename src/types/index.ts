@@ -69,7 +69,7 @@ export interface MonthlyRequest {
 export interface StockAdjustment {
     id: string;
     engineer_id: string;
-    engineer_name: string;
+    engineer_name?: string;
     part_id: string;
     part_name: string;
     previous_quantity: number;
@@ -78,6 +78,7 @@ export interface StockAdjustment {
     reason?: string | null;
     timestamp: string;
     area_group?: string | null;
+    engineer?: { name: string };
 }
 
 // ─── Usage Reports ───

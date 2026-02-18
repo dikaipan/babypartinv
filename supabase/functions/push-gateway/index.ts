@@ -209,7 +209,7 @@ Deno.serve(async (req: Request) => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json; charset=utf-8',
-                Authorization: `Key ${oneSignalApiKey}`,
+                Authorization: `Basic ${oneSignalApiKey}`,
             },
             body: JSON.stringify(payload),
         });

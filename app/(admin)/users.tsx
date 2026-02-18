@@ -11,6 +11,7 @@ import { Profile } from '../../src/types';
 import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
+import { useDebounce } from '../../src/hooks/useDebounce';
 
 type UserFormState = {
     name: string;
@@ -45,6 +46,7 @@ export default function UsersPage() {
     const { width, height } = useWindowDimensions();
     const { user: currentUser, refreshProfile } = useAuthStore();
     const [search, setSearch] = useState('');
+    const debouncedSearch = useDebounce(search, 300);
     const [filter, setFilter] = useState<'all' | 'admin' | 'engineer'>('all');
     const [selectedLocation, setSelectedLocation] = useState<string>('all');
     const [showLocationMenu, setShowLocationMenu] = useState(false);
@@ -269,13 +271,57 @@ export default function UsersPage() {
     const locations = Array.from(new Set(users.map(u => u.location).filter(Boolean) as string[])).sort();
 
     const filtered = users.filter(u => {
-        const matchSearch = u.name.toLowerCase().includes(search.toLowerCase()) ||
-            u.email.toLowerCase().includes(search.toLowerCase()) ||
-            (u.employee_id || '').toLowerCase().includes(search.toLowerCase());
+        const matchSearch = u.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+            u.email.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+            (u.employee_id || '').toLowerCase().includes(debouncedSearch.toLowerCase());
         if (selectedLocation !== 'all' && u.location !== selectedLocation) return false;
         if (filter === 'all') return matchSearch;
         return matchSearch && u.role === filter;
     });
+
+    const renderItem = ({ item: u }: { item: Profile }) => (
+        <View style={[adminStyles.card, { width: cardWidth }]}>
+            <View style={adminStyles.cardHeader}>
+                <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>{u.name[0]?.toUpperCase()}</Text>
+                </View>
+                <View style={[styles.roleBadge, {
+                    backgroundColor: u.role === 'admin' ? Colors.info + '15' : Colors.primary + '15',
+                    borderColor: u.role === 'admin' ? Colors.info + '30' : Colors.primary + '30'
+                }]}>
+                    <Text style={[styles.roleText, { color: u.role === 'admin' ? Colors.info : Colors.primary }]}>
+                        {u.role}
+                    </Text>
+                </View>
+            </View>
+
+            <View style={adminStyles.cardBody}>
+                <Text style={styles.name} numberOfLines={1}>{u.name}</Text>
+                <Text style={styles.email} numberOfLines={1}>{u.email}</Text>
+                {u.employee_id && (
+                    <View style={styles.idBadge}>
+                        <MaterialCommunityIcons name="card-account-details-outline" size={14} color={Colors.textMuted} />
+                        <Text style={styles.empId}>{u.employee_id}</Text>
+                    </View>
+                )}
+            </View>
+
+            <View style={adminStyles.cardFooter}>
+                <View style={styles.statusRow}>
+                    <View style={[styles.statusDot, { backgroundColor: u.is_active ? Colors.success : Colors.textMuted }]} />
+                    <Text style={[styles.statusText, { color: u.is_active ? Colors.success : Colors.textMuted }]}>
+                        {u.is_active ? 'Active' : 'Inactive'}
+                    </Text>
+                </View>
+                <IconButton
+                    icon="account-cog-outline"
+                    size={20}
+                    iconColor={Colors.textSecondary}
+                    onPress={() => openManageUser(u)}
+                />
+            </View>
+        </View>
+    );
 
     return (
         <View style={adminStyles.container}>
@@ -345,49 +391,11 @@ export default function UsersPage() {
                 contentContainerStyle={adminStyles.scrollContent}
                 ItemSeparatorComponent={() => <View style={{ height: cardGap }} />}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-                renderItem={({ item: u }) => (
-                    <View style={[adminStyles.card, { width: cardWidth }]}>
-                        <View style={adminStyles.cardHeader}>
-                            <View style={styles.avatar}>
-                                <Text style={styles.avatarText}>{u.name[0]?.toUpperCase()}</Text>
-                            </View>
-                            <View style={[styles.roleBadge, {
-                                backgroundColor: u.role === 'admin' ? Colors.info + '15' : Colors.primary + '15',
-                                borderColor: u.role === 'admin' ? Colors.info + '30' : Colors.primary + '30'
-                            }]}>
-                                <Text style={[styles.roleText, { color: u.role === 'admin' ? Colors.info : Colors.primary }]}>
-                                    {u.role}
-                                </Text>
-                            </View>
-                        </View>
-
-                        <View style={adminStyles.cardBody}>
-                            <Text style={styles.name} numberOfLines={1}>{u.name}</Text>
-                            <Text style={styles.email} numberOfLines={1}>{u.email}</Text>
-                            {u.employee_id && (
-                                <View style={styles.idBadge}>
-                                    <MaterialCommunityIcons name="card-account-details-outline" size={14} color={Colors.textMuted} />
-                                    <Text style={styles.empId}>{u.employee_id}</Text>
-                                </View>
-                            )}
-                        </View>
-
-                        <View style={adminStyles.cardFooter}>
-                            <View style={styles.statusRow}>
-                                <View style={[styles.statusDot, { backgroundColor: u.is_active ? Colors.success : Colors.textMuted }]} />
-                                <Text style={[styles.statusText, { color: u.is_active ? Colors.success : Colors.textMuted }]}>
-                                    {u.is_active ? 'Active' : 'Inactive'}
-                                </Text>
-                            </View>
-                            <IconButton
-                                icon="account-cog-outline"
-                                size={20}
-                                iconColor={Colors.textSecondary}
-                                onPress={() => openManageUser(u)}
-                            />
-                        </View>
-                    </View>
-                )}
+                renderItem={renderItem}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={11}
+                removeClippedSubviews={true}
                 ListEmptyComponent={
                     <View style={adminStyles.emptyState}>
                         <MaterialCommunityIcons name="account-search-outline" size={48} color={Colors.textMuted} />

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, LayoutAnimation, Platform, UIManager, Modal, Share } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, LayoutAnimation, Platform, UIManager, Modal, Share, FlatList } from 'react-native';
 import { Text, Chip, Searchbar, Button, SegmentedButtons } from 'react-native-paper';
 import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeR
 import { Profile, EngineerStock, InventoryPart } from '../../src/types';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { normalizeArea } from '../../src/utils/normalizeArea';
+import { useDebounce } from '../../src/hooks/useDebounce';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -161,7 +162,7 @@ const fetchReportsData = async (): Promise<ReportsData> => {
         supabase.from('inventory').select('id, part_name, total_stock, min_stock'),
         supabase
             .from('stock_adjustments')
-            .select('id, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp, engineer_name')
+            .select('id, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp, engineer:profiles(name)')
             .order('timestamp', { ascending: false })
             .limit(50),
         supabase
@@ -292,6 +293,7 @@ export default function ReportsPage() {
     const [monitorWindow, setMonitorWindow] = useState<MonitorWindow>('7d');
     const [refreshing, setRefreshing] = useState(false);
     const [search, setSearch] = useState('');
+    const debouncedSearch = useDebounce(search, 300);
     const [filterArea, setFilterArea] = useState('Semua Area');
     const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
     const [error, setError] = useState('');
@@ -396,8 +398,8 @@ export default function ReportsPage() {
         let groups = areaGroups;
         if (filterArea !== 'Semua Area') groups = groups.filter(g => g.area === filterArea);
 
-        if (search.trim()) {
-            const q = search.toLowerCase();
+        if (debouncedSearch.trim()) {
+            const q = debouncedSearch.toLowerCase();
             groups = groups.map(g => {
                 const filtered = g.engineers.filter(e =>
                     e.profile.name.toLowerCase().includes(q) ||
@@ -415,7 +417,7 @@ export default function ReportsPage() {
             }).filter(Boolean) as AreaGroupData[];
         }
         return groups;
-    }, [areaGroups, filterArea, search]);
+    }, [areaGroups, filterArea, debouncedSearch]);
 
     const toggleArea = (area: string) => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -801,14 +803,166 @@ export default function ReportsPage() {
         }
     };
 
+    const renderAreaItem = useCallback(({ item: group }: { item: AreaGroupData }) => {
+        const isExpanded = expandedAreas.has(group.area);
+        return (
+            <View style={styles.areaCard}>
+                <Pressable style={styles.areaHeader} onPress={() => toggleArea(group.area)}>
+                    <View style={styles.areaHeaderLeft}>
+                        <View style={[styles.areaIcon, { backgroundColor: Colors.primary + '15' }]}>
+                            <MaterialCommunityIcons name="map-marker" size={20} color={Colors.primary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.areaName}>{group.area}</Text>
+                            <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                                <View style={[styles.miniTag, { borderColor: Colors.info + '50' }]}>
+                                    <Text style={[styles.miniTagText, { color: Colors.info }]}>{group.engineerCount} Engineer</Text>
+                                </View>
+                                <View style={[styles.miniTag, { borderColor: Colors.accent + '50' }]}>
+                                    <Text style={[styles.miniTagText, { color: Colors.accent }]}>{group.totalParts} Part</Text>
+                                </View>
+                                <View style={[styles.miniTag, { borderColor: Colors.primary + '50' }]}>
+                                    <Text style={[styles.miniTagText, { color: Colors.primary }]}>Qty: {group.totalQty}</Text>
+                                </View>
+                            </View>
+                        </View>
+                    </View>
+                    <MaterialCommunityIcons
+                        name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                        size={22} color={Colors.textSecondary}
+                    />
+                </Pressable>
+
+                {isExpanded && (
+                    <View style={styles.engineerList}>
+                        {group.engineers.map(eng => {
+                            const missingParts = getMissingParts(eng);
+                            return (
+                                <View key={eng.profile.id} style={styles.engineerRow}>
+                                    <View style={styles.engineerHeader}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                                            <View style={[styles.engAvatar, eng.totalQty === 0 && { backgroundColor: Colors.danger + '20', borderColor: Colors.danger + '40' }]}>
+                                                <MaterialCommunityIcons
+                                                    name="account" size={16}
+                                                    color={eng.totalQty === 0 ? Colors.danger : Colors.primary}
+                                                />
+                                            </View>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.engName}>{eng.profile.name}</Text>
+                                                <Text style={styles.engId}>ID: {eng.profile.employee_id || '-'}</Text>
+                                            </View>
+                                        </View>
+                                        <View style={[styles.engQtyBadge, eng.totalQty === 0 && { backgroundColor: Colors.danger + '15', borderColor: Colors.danger + '40' }]}>
+                                            <Text style={[styles.engQtyText, eng.totalQty === 0 && { color: Colors.danger }]}>
+                                                {eng.totalQty === 0 ? 'Kosong' : `${eng.stocks.length}/${eng.stocks.length + eng.missingCount} Part`}
+                                            </Text>
+                                        </View>
+                                    </View>
+
+                                    {eng.stocks.length > 0 && (
+                                        <View style={{ gap: 6 }}>
+                                            <View style={styles.stockSectionLabel}>
+                                                <MaterialCommunityIcons name="check-circle" size={14} color={Colors.success} />
+                                                <Text style={[styles.stockSectionLabelText, { color: Colors.success }]}>Dimiliki ({eng.stocks.length})</Text>
+                                            </View>
+                                            <View style={styles.stockChipsRow}>
+                                                {eng.stocks.map((s, idx) => (
+                                                    <View key={idx} style={[styles.stockChip, { borderColor: Colors.success + '30' }]}>
+                                                        <Text style={styles.stockChipText}>
+                                                            <Text style={{ fontWeight: '800', color: Colors.text }}>{s.part_id}</Text>
+                                                            {' '}<Text style={{ fontWeight: '800', color: Colors.primary }}>x{s.quantity}</Text>
+                                                        </Text>
+                                                    </View>
+                                                ))}
+                                            </View>
+                                        </View>
+                                    )}
+
+                                    {missingParts.length > 0 && (
+                                        <View style={{ gap: 6 }}>
+                                            <View style={styles.stockSectionLabel}>
+                                                <MaterialCommunityIcons name="close-circle" size={14} color={Colors.danger} />
+                                                <Text style={[styles.stockSectionLabelText, { color: Colors.danger }]}>Tidak Dimiliki ({missingParts.length})</Text>
+                                            </View>
+                                            <View style={styles.stockChipsRow}>
+                                                {missingParts.map((s, idx) => (
+                                                    <View key={idx} style={[styles.stockChip, { borderColor: Colors.danger + '30', backgroundColor: Colors.danger + '08' }]}>
+                                                        <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.danger + 'CC' }}>{s.part_id}</Text>
+                                                    </View>
+                                                ))}
+                                            </View>
+                                        </View>
+                                    )}
+                                </View>
+                            );
+                        })}
+                    </View>
+                )}
+            </View>
+        );
+    }, [expandedAreas, getMissingParts]);
+
+    const renderDeliveryItem = useCallback(({ item: d }: { item: any }) => (
+        <View style={adminStyles.card}>
+            <View style={adminStyles.cardHeader}>
+                <View style={styles.logIconInfo}>
+                    <View style={[adminStyles.iconBox, { backgroundColor: Colors.primary + '15' }]}>
+                        <MaterialCommunityIcons name="truck-delivery-outline" size={20} color={Colors.primary} />
+                    </View>
+                    <View>
+                        <Text style={styles.logTitle}>{(d.engineer as any)?.name || 'Unknown'}</Text>
+                        <Text style={styles.logTime}>{d.delivered_at ? new Date(d.delivered_at).toLocaleDateString() : '-'} • {d.delivered_at ? new Date(d.delivered_at).toLocaleTimeString() : '-'}</Text>
+                    </View>
+                </View>
+                <Chip textStyle={{ fontSize: 10, fontWeight: '700' }} style={{ height: 24 }}>{(d.items as any[])?.length || 0} Items</Chip>
+            </View>
+            <View style={adminStyles.cardBody}>
+                <View style={styles.listItems}>
+                    {((d.items || []) as any[]).map((item: any, idx: number) => (
+                        <View key={idx} style={styles.itemChip}>
+                            <Text style={styles.itemText}>{item.partId} <Text style={{ fontWeight: '700' }}>x{item.quantity}</Text></Text>
+                        </View>
+                    ))}
+                </View>
+            </View>
+        </View>
+    ), []);
+
+    const renderLogItem = useCallback(({ item: log }: { item: any }) => (
+        <View style={adminStyles.card}>
+            <View style={adminStyles.cardHeader}>
+                <View style={styles.logIconInfo}>
+                    <View style={[adminStyles.iconBox, { backgroundColor: Colors.accent + '15' }]}>
+                        <MaterialCommunityIcons name="file-document-edit-outline" size={20} color={Colors.accent} />
+                    </View>
+                    <View>
+                        <Text style={styles.logTitle}>{log.part_name} ({log.part_id})</Text>
+                        <Text style={styles.logTime}>{new Date(log.timestamp).toLocaleDateString()} • {(log.engineer?.name || 'Admin')}</Text>
+                    </View>
+                </View>
+                <Text style={{ fontWeight: '700', fontSize: 16, color: log.delta >= 0 ? Colors.success : Colors.danger }}>
+                    {log.delta >= 0 ? '+' : ''}{log.delta}
+                </Text>
+            </View>
+
+            {(log.reason || log.notes) && (
+                <View style={[adminStyles.cardBody, { marginBottom: 0, paddingBottom: 0 }]}>
+                    <Text style={styles.notes}>"{log.reason || log.notes}"</Text>
+                </View>
+            )}
+
+            <View style={[adminStyles.cardFooter, { marginTop: 8 }]}>
+                <View style={styles.metaRow}>
+                    <Text style={styles.metaLabel}>Before: <Text style={styles.metaValue}>{log.previous_quantity}</Text></Text>
+                    <MaterialCommunityIcons name="arrow-right" size={14} color={Colors.textMuted} style={{ marginHorizontal: 8 }} />
+                    <Text style={styles.metaLabel}>After: <Text style={styles.metaValue}>{log.new_quantity}</Text></Text>
+                </View>
+            </View>
+        </View>
+    ), []);
+
     return (
-        <>
-            <ScrollView
-                style={styles.container}
-                indicatorStyle="black"
-                contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-            >
+        <View style={styles.container}>
             <View style={styles.header}>
                 <View>
                     <Text style={styles.title}>Reports</Text>
@@ -850,372 +1004,196 @@ export default function ReportsPage() {
 
             {/* ═══ Monitor Tab ═══ */}
             {tab === 'monitor' && (
-                <View style={{ gap: 16 }}>
-                    <View style={[adminStyles.card, styles.monitorControlCard]}>
-                        <View style={[styles.monitorControlHead, !isWide && { alignItems: 'flex-start' }]}>
-                            <View>
-                                <Text style={styles.monitorSectionTitle}>Monitor Snapshot</Text>
-                                <Text style={styles.monitorSectionHint}>Rentang aktif: {monitorWindowLabel}</Text>
-                            </View>
-                            <Text style={styles.monitorUpdatedAt}>Last updated {formatRelativeTime(lastUpdatedAt)}</Text>
-                        </View>
-                        <ScrollView
-                            horizontal
-                            showsHorizontalScrollIndicator={false}
-                            contentContainerStyle={styles.monitorWindowChipRow}
-                        >
-                            {MONITOR_WINDOW_OPTIONS.map((option) => {
-                                const isActive = option.value === monitorWindow;
-                                return (
-                                    <Chip
-                                        key={option.value}
-                                        mode={isActive ? 'flat' : 'outlined'}
-                                        selected={isActive}
-                                        onPress={() => setMonitorWindow(option.value)}
-                                        style={[
-                                            styles.monitorWindowChip,
-                                            isActive && styles.monitorWindowChipActive,
-                                        ]}
-                                        textStyle={[
-                                            styles.monitorWindowChipText,
-                                            isActive && styles.monitorWindowChipTextActive,
-                                        ]}
-                                    >
-                                        {option.label}
-                                    </Chip>
-                                );
-                            })}
-                        </ScrollView>
-                    </View>
-
-                    <View style={[styles.statsRow, !isWide && { flexWrap: 'wrap' }]}>
-                        {[
-                            {
-                                icon: 'file-document-multiple-outline',
-                                val: openRequestCount,
-                                label: `Open Request (${monitorWindowLabel})`,
-                                clr: Colors.primary,
-                            },
-                            {
-                                icon: 'alert-circle-outline',
-                                val: slaRiskCount,
-                                label: 'SLA Terancam',
-                                clr: Colors.accent,
-                            },
-                            {
-                                icon: 'package-variant-remove',
-                                val: criticalPartCount,
-                                label: 'Part Critical',
-                                clr: Colors.danger,
-                            },
-                            {
-                                icon: 'clock-time-eight-outline',
-                                val: averageLeadTimeLabel,
-                                label: 'Avg Lead Time',
-                                clr: Colors.info,
-                            },
-                        ].map((s, i) => (
-                            <View key={i} style={[styles.statCard, { borderColor: s.clr + '40' }]}>
-                                <View style={[styles.statIcon, { backgroundColor: s.clr + '15' }]}>
-                                    <MaterialCommunityIcons name={s.icon as any} size={18} color={s.clr} />
-                                </View>
-                                <Text style={styles.statVal}>{s.val}</Text>
-                                <Text style={styles.statLabel}>{s.label}</Text>
-                            </View>
-                        ))}
-                    </View>
-
-                    <View style={[adminStyles.card, { padding: 14, gap: 10 }]}>
-                        <Text style={styles.monitorSectionTitle}>Priority Alerts</Text>
-                        <Text style={styles.monitorSectionHint}>Urutan critical, warning, info.</Text>
-                        <View style={styles.alertList}>
-                            {monitorAlerts.map((alert) => {
-                                const visual = getAlertVisual(alert.severity);
-                                return (
-                                    <View key={alert.id} style={[styles.alertCard, { borderColor: visual.color + '35' }]}>
-                                        <View style={[styles.alertIcon, { backgroundColor: visual.color + '15' }]}>
-                                            <MaterialCommunityIcons name={visual.icon as any} size={16} color={visual.color} />
-                                        </View>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={styles.alertTitle}>{alert.title}</Text>
-                                            <Text style={styles.alertDetail}>{alert.detail}</Text>
-                                        </View>
+                <FlatList
+                    data={filteredGroups}
+                    keyExtractor={(item) => item.area}
+                    renderItem={renderAreaItem}
+                    initialNumToRender={3}
+                    maxToRenderPerBatch={3}
+                    windowSize={5}
+                    removeClippedSubviews={true}
+                    contentContainerStyle={{ paddingBottom: 100 }}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                    ListHeaderComponent={
+                        <View style={{ gap: 16, marginBottom: 16 }}>
+                            <View style={[adminStyles.card, styles.monitorControlCard]}>
+                                <View style={[styles.monitorControlHead, !isWide && { alignItems: 'flex-start' }]}>
+                                    <View>
+                                        <Text style={styles.monitorSectionTitle}>Monitor Snapshot</Text>
+                                        <Text style={styles.monitorSectionHint}>Rentang aktif: {monitorWindowLabel}</Text>
                                     </View>
-                                );
-                            })}
-                        </View>
-                    </View>
-
-                    <View style={adminStyles.card}>
-                        <Text style={styles.monitorSectionTitle}>Top Risk Parts</Text>
-                        <Text style={styles.monitorSectionHint}>
-                            Proyeksi stockout berdasarkan rata-rata pemakaian {monitorWindowLabel}.
-                        </Text>
-                        {riskParts.length === 0 ? (
-                            <Text style={styles.monitorEmptyText}>Belum ada part dengan risiko tinggi.</Text>
-                        ) : (
-                            <View style={styles.riskTable}>
-                                <View style={[styles.riskRow, styles.riskHeaderRow]}>
-                                    <Text style={[styles.riskCell, styles.riskCellPart]}>Part</Text>
-                                    <Text style={[styles.riskCell, styles.riskCellSm]}>Stok</Text>
-                                    <Text style={[styles.riskCell, styles.riskCellMd]}>Avg/hari</Text>
-                                    <Text style={[styles.riskCell, styles.riskCellMd]}>Days left</Text>
+                                    <Text style={styles.monitorUpdatedAt}>Last updated {formatRelativeTime(lastUpdatedAt)}</Text>
                                 </View>
-                                {riskParts.map((part) => (
-                                    <View key={part.part_id} style={styles.riskRow}>
-                                        <View style={[styles.riskCell, styles.riskCellPart]}>
-                                            <Text style={styles.riskPartName} numberOfLines={1}>{part.part_name}</Text>
-                                            <Text style={styles.riskPartId} numberOfLines={1}>{part.part_id}</Text>
+                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monitorWindowChipRow}>
+                                    {MONITOR_WINDOW_OPTIONS.map((option) => {
+                                        const isActive = option.value === monitorWindow;
+                                        return (
+                                            <Chip
+                                                key={option.value}
+                                                mode={isActive ? 'flat' : 'outlined'}
+                                                selected={isActive}
+                                                onPress={() => setMonitorWindow(option.value)}
+                                                style={[styles.monitorWindowChip, isActive && styles.monitorWindowChipActive]}
+                                                textStyle={[styles.monitorWindowChipText, isActive && styles.monitorWindowChipTextActive]}
+                                            >
+                                                {option.label}
+                                            </Chip>
+                                        );
+                                    })}
+                                </ScrollView>
+                            </View>
+
+                            <View style={[styles.statsRow, !isWide && { flexWrap: 'wrap' }]}>
+                                {[
+                                    { icon: 'file-document-multiple-outline', val: openRequestCount, label: `Open Request (${monitorWindowLabel})`, clr: Colors.primary },
+                                    { icon: 'alert-circle-outline', val: slaRiskCount, label: 'SLA Terancam', clr: Colors.accent },
+                                    { icon: 'package-variant-remove', val: criticalPartCount, label: 'Part Critical', clr: Colors.danger },
+                                    { icon: 'clock-time-eight-outline', val: averageLeadTimeLabel, label: 'Avg Lead Time', clr: Colors.info },
+                                ].map((s, i) => (
+                                    <View key={i} style={[styles.statCard, { borderColor: s.clr + '40' }]}>
+                                        <View style={[styles.statIcon, { backgroundColor: s.clr + '15' }]}>
+                                            <MaterialCommunityIcons name={s.icon as any} size={18} color={s.clr} />
                                         </View>
-                                        <Text style={[styles.riskCell, styles.riskCellSm, part.stock <= part.min_stock && { color: Colors.danger }]}>
-                                            {part.stock}
-                                        </Text>
-                                        <Text style={[styles.riskCell, styles.riskCellMd]}>{part.avgDaily.toFixed(1)}</Text>
-                                        <Text style={[styles.riskCell, styles.riskCellMd, Number.isFinite(part.daysToStockout) && part.daysToStockout <= RISK_STOCKOUT_THRESHOLD_DAYS && { color: Colors.danger }]}>
-                                            {formatDaysToStockout(part.daysToStockout)}
-                                        </Text>
+                                        <Text style={styles.statVal}>{s.val}</Text>
+                                        <Text style={styles.statLabel}>{s.label}</Text>
                                     </View>
                                 ))}
                             </View>
-                        )}
-                    </View>
 
-                    <View style={[adminStyles.card, styles.monitorCoverageCard]}>
-                        <Text style={styles.monitorSectionTitle}>Engineer Coverage</Text>
-                        <Text style={styles.monitorSectionHint}>Ringkasan distribusi stok engineer lintas area.</Text>
-                        <View style={[styles.statsRow, !isWide && { flexWrap: 'wrap' }]}>
-                            {[
-                                { icon: 'account-group-outline', val: totalEngineers, label: 'Total Engineer', clr: Colors.info },
-                                { icon: 'map-marker-multiple-outline', val: areaGroups.length, label: 'Area Group', clr: Colors.primary },
-                                { icon: 'package-variant', val: totalStockQty, label: 'Total Stok Qty', clr: Colors.accent },
-                                { icon: 'alert-circle-outline', val: engineersWithZero, label: 'Tanpa Stok', clr: Colors.danger },
-                            ].map((s, i) => (
-                                <View key={i} style={[styles.statCard, { borderColor: s.clr + '40' }]}>
-                                    <View style={[styles.statIcon, { backgroundColor: s.clr + '15' }]}>
-                                        <MaterialCommunityIcons name={s.icon as any} size={18} color={s.clr} />
-                                    </View>
-                                    <Text style={styles.statVal}>{s.val}</Text>
-                                    <Text style={styles.statLabel}>{s.label}</Text>
+                            <View style={[adminStyles.card, { padding: 14, gap: 10 }]}>
+                                <Text style={styles.monitorSectionTitle}>Priority Alerts</Text>
+                                <Text style={styles.monitorSectionHint}>Urutan critical, warning, info.</Text>
+                                <View style={styles.alertList}>
+                                    {monitorAlerts.map((alert) => {
+                                        const visual = getAlertVisual(alert.severity);
+                                        return (
+                                            <View key={alert.id} style={[styles.alertCard, { borderColor: visual.color + '35' }]}>
+                                                <View style={[styles.alertIcon, { backgroundColor: visual.color + '15' }]}>
+                                                    <MaterialCommunityIcons name={visual.icon as any} size={16} color={visual.color} />
+                                                </View>
+                                                <View style={{ flex: 1 }}>
+                                                    <Text style={styles.alertTitle}>{alert.title}</Text>
+                                                    <Text style={styles.alertDetail}>{alert.detail}</Text>
+                                                </View>
+                                            </View>
+                                        );
+                                    })}
                                 </View>
-                            ))}
-                        </View>
-                    </View>
+                            </View>
 
-                    {/* Filter & Search */}
-                    <View style={[adminStyles.card, { padding: 14, gap: 12 }]}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.textSecondary }}>Filter & Pencarian</Text>
-                        <View style={[styles.filterRow, !isWide && { flexDirection: 'column' }]}>
-                            <Dropdown label="Area Group" icon="map-marker-outline" value={filterArea} options={allAreas} onChange={setFilterArea} />
-                            <View style={{ flex: 1, gap: 6 }}>
-                                <Text style={ddStyles.label}>Cari Engineer / Part</Text>
-                                <Searchbar
-                                    placeholder="Nama, ID, atau Part..."
-                                    value={search}
-                                    onChangeText={setSearch}
-                                    style={styles.search}
-                                    inputStyle={{ color: Colors.text, fontSize: 14 }}
-                                    iconColor={Colors.primary}
-                                    placeholderTextColor={Colors.textMuted}
-                                    elevation={0}
-                                />
+                            <View style={adminStyles.card}>
+                                <Text style={styles.monitorSectionTitle}>Top Risk Parts</Text>
+                                <Text style={styles.monitorSectionHint}>Proyeksi stockout berdasarkan rata-rata pemakaian {monitorWindowLabel}.</Text>
+                                {riskParts.length === 0 ? (
+                                    <Text style={styles.monitorEmptyText}>Belum ada part dengan risiko tinggi.</Text>
+                                ) : (
+                                    <View style={styles.riskTable}>
+                                        <View style={[styles.riskRow, styles.riskHeaderRow]}>
+                                            <Text style={[styles.riskCell, styles.riskCellPart]}>Part</Text>
+                                            <Text style={[styles.riskCell, styles.riskCellSm]}>Stok</Text>
+                                            <Text style={[styles.riskCell, styles.riskCellMd]}>Avg/hari</Text>
+                                            <Text style={[styles.riskCell, styles.riskCellMd]}>Days left</Text>
+                                        </View>
+                                        {riskParts.map((part) => (
+                                            <View key={part.part_id} style={styles.riskRow}>
+                                                <View style={[styles.riskCell, styles.riskCellPart]}>
+                                                    <Text style={styles.riskPartName} numberOfLines={1}>{part.part_name}</Text>
+                                                    <Text style={styles.riskPartId} numberOfLines={1}>{part.part_id}</Text>
+                                                </View>
+                                                <Text style={[styles.riskCell, styles.riskCellSm, part.stock <= part.min_stock && { color: Colors.danger }]}>{part.stock}</Text>
+                                                <Text style={[styles.riskCell, styles.riskCellMd]}>{part.avgDaily.toFixed(1)}</Text>
+                                                <Text style={[styles.riskCell, styles.riskCellMd, Number.isFinite(part.daysToStockout) && part.daysToStockout <= RISK_STOCKOUT_THRESHOLD_DAYS && { color: Colors.danger }]}>
+                                                    {formatDaysToStockout(part.daysToStockout)}
+                                                </Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                )}
+                            </View>
+
+                            <View style={[adminStyles.card, styles.monitorCoverageCard]}>
+                                <Text style={styles.monitorSectionTitle}>Engineer Coverage</Text>
+                                <Text style={styles.monitorSectionHint}>Ringkasan distribusi stok engineer lintas area.</Text>
+                                <View style={[styles.statsRow, !isWide && { flexWrap: 'wrap' }]}>
+                                    {[
+                                        { icon: 'account-group-outline', val: totalEngineers, label: 'Total Engineer', clr: Colors.info },
+                                        { icon: 'map-marker-multiple-outline', val: areaGroups.length, label: 'Area Group', clr: Colors.primary },
+                                        { icon: 'package-variant', val: totalStockQty, label: 'Total Stok Qty', clr: Colors.accent },
+                                        { icon: 'alert-circle-outline', val: engineersWithZero, label: 'Tanpa Stok', clr: Colors.danger },
+                                    ].map((s, i) => (
+                                        <View key={i} style={[styles.statCard, { borderColor: s.clr + '40' }]}>
+                                            <View style={[styles.statIcon, { backgroundColor: s.clr + '15' }]}>
+                                                <MaterialCommunityIcons name={s.icon as any} size={18} color={s.clr} />
+                                            </View>
+                                            <Text style={styles.statVal}>{s.val}</Text>
+                                            <Text style={styles.statLabel}>{s.label}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            </View>
+
+                            <View style={[adminStyles.card, { padding: 14, gap: 12 }]}>
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: Colors.textSecondary }}>Filter & Pencarian</Text>
+                                <View style={[styles.filterRow, !isWide && { flexDirection: 'column' }]}>
+                                    <Dropdown label="Area Group" icon="map-marker-outline" value={filterArea} options={allAreas} onChange={setFilterArea} />
+                                    <View style={{ flex: 1, gap: 6 }}>
+                                        <Text style={ddStyles.label}>Cari Engineer / Part</Text>
+                                        <Searchbar
+                                            placeholder="Nama, ID, atau Part..."
+                                            value={search}
+                                            onChangeText={setSearch}
+                                            style={styles.search}
+                                            inputStyle={{ color: Colors.text, fontSize: 14 }}
+                                            iconColor={Colors.primary}
+                                            placeholderTextColor={Colors.textMuted}
+                                            elevation={0}
+                                        />
+                                    </View>
+                                </View>
                             </View>
                         </View>
-                    </View>
-
-                    {/* Area Group Cards */}
-                    {filteredGroups.length === 0 ? (
+                    }
+                    ListEmptyComponent={
                         <View style={styles.emptyState}>
                             <MaterialCommunityIcons name="magnify-close" size={48} color={Colors.textMuted} />
                             <Text style={styles.emptyText}>Tidak ditemukan data yang cocok.</Text>
                         </View>
-                    ) : (
-                        filteredGroups.map(group => {
-                            const isExpanded = expandedAreas.has(group.area);
-                            return (
-                                <View key={group.area} style={styles.areaCard}>
-                                    {/* Area Header — clickable to expand */}
-                                    <Pressable style={styles.areaHeader} onPress={() => toggleArea(group.area)}>
-                                        <View style={styles.areaHeaderLeft}>
-                                            <View style={[styles.areaIcon, { backgroundColor: Colors.primary + '15' }]}>
-                                                <MaterialCommunityIcons name="map-marker" size={20} color={Colors.primary} />
-                                            </View>
-                                            <View style={{ flex: 1 }}>
-                                                <Text style={styles.areaName}>{group.area}</Text>
-                                                <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-                                                    <View style={[styles.miniTag, { borderColor: Colors.info + '50' }]}>
-                                                        <Text style={[styles.miniTagText, { color: Colors.info }]}>{group.engineerCount} Engineer</Text>
-                                                    </View>
-                                                    <View style={[styles.miniTag, { borderColor: Colors.accent + '50' }]}>
-                                                        <Text style={[styles.miniTagText, { color: Colors.accent }]}>{group.totalParts} Part</Text>
-                                                    </View>
-                                                    <View style={[styles.miniTag, { borderColor: Colors.primary + '50' }]}>
-                                                        <Text style={[styles.miniTagText, { color: Colors.primary }]}>Qty: {group.totalQty}</Text>
-                                                    </View>
-                                                </View>
-                                            </View>
-                                        </View>
-                                        <MaterialCommunityIcons
-                                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                                            size={22} color={Colors.textSecondary}
-                                        />
-                                    </Pressable>
-
-                                    {/* Expanded Engineer List */}
-                                    {isExpanded && (
-                                        <View style={styles.engineerList}>
-                                            {group.engineers.map(eng => {
-                                                const missingParts = getMissingParts(eng);
-                                                return (
-                                                    <View key={eng.profile.id} style={styles.engineerRow}>
-                                                    <View style={styles.engineerHeader}>
-                                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                                                            <View style={[styles.engAvatar, eng.totalQty === 0 && { backgroundColor: Colors.danger + '20', borderColor: Colors.danger + '40' }]}>
-                                                                <MaterialCommunityIcons
-                                                                    name="account" size={16}
-                                                                    color={eng.totalQty === 0 ? Colors.danger : Colors.primary}
-                                                                />
-                                                            </View>
-                                                            <View style={{ flex: 1 }}>
-                                                                <Text style={styles.engName}>{eng.profile.name}</Text>
-                                                                <Text style={styles.engId}>ID: {eng.profile.employee_id || '-'}</Text>
-                                                            </View>
-                                                        </View>
-                                                        <View style={[styles.engQtyBadge, eng.totalQty === 0 && { backgroundColor: Colors.danger + '15', borderColor: Colors.danger + '40' }]}>
-                                                            <Text style={[styles.engQtyText, eng.totalQty === 0 && { color: Colors.danger }]}>
-                                                                {eng.totalQty === 0 ? 'Kosong' : `${eng.stocks.length}/${eng.stocks.length + eng.missingCount} Part`}
-                                                            </Text>
-                                                        </View>
-                                                    </View>
-
-                                                    {/* Dimiliki */}
-                                                    {eng.stocks.length > 0 && (
-                                                        <View style={{ gap: 6 }}>
-                                                            <View style={styles.stockSectionLabel}>
-                                                                <MaterialCommunityIcons name="check-circle" size={14} color={Colors.success} />
-                                                                <Text style={[styles.stockSectionLabelText, { color: Colors.success }]}>Dimiliki ({eng.stocks.length})</Text>
-                                                            </View>
-                                                            <View style={styles.stockChipsRow}>
-                                                                {eng.stocks.map((s, idx) => (
-                                                                    <View key={idx} style={[styles.stockChip, { borderColor: Colors.success + '30' }]}>
-                                                                        <Text style={styles.stockChipText}>
-                                                                            <Text style={{ fontWeight: '800', color: Colors.text }}>{s.part_id}</Text>
-                                                                            {' '}<Text style={{ fontWeight: '800', color: Colors.primary }}>x{s.quantity}</Text>
-                                                                        </Text>
-                                                                    </View>
-                                                                ))}
-                                                            </View>
-                                                        </View>
-                                                    )}
-
-                                                    {/* Tidak Dimiliki */}
-                                                    {missingParts.length > 0 && (
-                                                        <View style={{ gap: 6 }}>
-                                                            <View style={styles.stockSectionLabel}>
-                                                                <MaterialCommunityIcons name="close-circle" size={14} color={Colors.danger} />
-                                                                <Text style={[styles.stockSectionLabelText, { color: Colors.danger }]}>Tidak Dimiliki ({missingParts.length})</Text>
-                                                            </View>
-                                                            <View style={styles.stockChipsRow}>
-                                                                {missingParts.map((s, idx) => (
-                                                                    <View key={idx} style={[styles.stockChip, { borderColor: Colors.danger + '30', backgroundColor: Colors.danger + '08' }]}>
-                                                                        <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.danger + 'CC' }}>{s.part_id}</Text>
-                                                                    </View>
-                                                                ))}
-                                                            </View>
-                                                        </View>
-                                                    )}
-                                                    </View>
-                                                );
-                                            })}
-                                        </View>
-                                    )}
-                                </View>
-                            );
-                        })
-                    )}
-                </View>
+                    }
+                />
             )}
 
             {/* ═══ Delivery Tab ═══ */}
             {tab === 'pengiriman' && (
-                <View style={styles.listContainer}>
-                    {deliveries.length === 0 ? (
+                <FlatList
+                    data={deliveries}
+                    keyExtractor={(item, index) => String(index)}
+                    renderItem={renderDeliveryItem}
+                    contentContainerStyle={{ paddingBottom: 100, gap: 16 }}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                    ListEmptyComponent={
                         <Text style={{ textAlign: 'center', color: Colors.textMuted, marginTop: 20 }}>No deliveries found.</Text>
-                    ) : (
-                        deliveries.map((d, i) => (
-                            <View key={i} style={adminStyles.card}>
-                                <View style={adminStyles.cardHeader}>
-                                    <View style={styles.logIconInfo}>
-                                        <View style={[adminStyles.iconBox, { backgroundColor: Colors.primary + '15' }]}>
-                                            <MaterialCommunityIcons name="truck-delivery-outline" size={20} color={Colors.primary} />
-                                        </View>
-                                        <View>
-                                            <Text style={styles.logTitle}>{(d.engineer as any)?.name || 'Unknown'}</Text>
-                                            <Text style={styles.logTime}>{d.delivered_at ? new Date(d.delivered_at).toLocaleDateString() : '-'} • {d.delivered_at ? new Date(d.delivered_at).toLocaleTimeString() : '-'}</Text>
-                                        </View>
-                                    </View>
-                                    <Chip textStyle={{ fontSize: 10, fontWeight: '700' }} style={{ height: 24 }}>{(d.items as any[])?.length || 0} Items</Chip>
-                                </View>
-                                <View style={adminStyles.cardBody}>
-                                    <View style={styles.listItems}>
-                                        {((d.items || []) as any[]).map((item: any, idx: number) => (
-                                            <View key={idx} style={styles.itemChip}>
-                                                <Text style={styles.itemText}>{item.partId} <Text style={{ fontWeight: '700' }}>x{item.quantity}</Text></Text>
-                                            </View>
-                                        ))}
-                                    </View>
-                                </View>
-                            </View>
-                        ))
-                    )}
-                </View>
+                    }
+                />
             )}
 
             {/* ═══ Logs Tab ═══ */}
             {tab === 'koreksi' && (
-                <View style={styles.listContainer}>
-                    {adjustments.length === 0 ? (
+                <FlatList
+                    data={adjustments}
+                    keyExtractor={(item) => item.id}
+                    renderItem={renderLogItem}
+                    contentContainerStyle={{ paddingBottom: 100, gap: 16 }}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                    ListEmptyComponent={
                         <Text style={{ textAlign: 'center', color: Colors.textMuted, marginTop: 20 }}>No adjustments found.</Text>
-                    ) : (
-                        adjustments.map((log, i) => (
-                            <View key={i} style={adminStyles.card}>
-                                <View style={adminStyles.cardHeader}>
-                                    <View style={styles.logIconInfo}>
-                                        <View style={[adminStyles.iconBox, { backgroundColor: Colors.accent + '15' }]}>
-                                            <MaterialCommunityIcons name="file-document-edit-outline" size={20} color={Colors.accent} />
-                                        </View>
-                                        <View>
-                                            <Text style={styles.logTitle}>{log.part_name} ({log.part_id})</Text>
-                                            <Text style={styles.logTime}>{new Date(log.timestamp).toLocaleDateString()} • {(log.engineer_name || 'Admin')}</Text>
-                                        </View>
-                                    </View>
-                                    <Text style={{ fontWeight: '700', fontSize: 16, color: log.delta >= 0 ? Colors.success : Colors.danger }}>
-                                        {log.delta >= 0 ? '+' : ''}{log.delta}
-                                    </Text>
-                                </View>
-
-                                {(log.reason || log.notes) && (
-                                    <View style={[adminStyles.cardBody, { marginBottom: 0, paddingBottom: 0 }]}>
-                                        <Text style={styles.notes}>"{log.reason || log.notes}"</Text>
-                                    </View>
-                                )}
-
-                                <View style={[adminStyles.cardFooter, { marginTop: 8 }]}>
-                                    <View style={styles.metaRow}>
-                                        <Text style={styles.metaLabel}>Before: <Text style={styles.metaValue}>{log.previous_quantity}</Text></Text>
-                                        <MaterialCommunityIcons name="arrow-right" size={14} color={Colors.textMuted} style={{ marginHorizontal: 8 }} />
-                                        <Text style={styles.metaLabel}>After: <Text style={styles.metaValue}>{log.new_quantity}</Text></Text>
-                                    </View>
-                                </View>
-                            </View>
-                        ))
-                    )}
-                </View>
+                    }
+                />
             )}
-            </ScrollView>
+
             <AppSnackbar visible={!!error} onDismiss={() => setError('')} duration={3200} style={{ backgroundColor: Colors.danger }}>
                 {error}
             </AppSnackbar>
-        </>
+        </View>
     );
 }
 

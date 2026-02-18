@@ -12,7 +12,8 @@ import { adminStyles } from '../../src/styles/adminStyles';
 import { normalizeArea } from '../../src/utils/normalizeArea';
 import { useDebounce } from '../../src/hooks/useDebounce';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+const isAndroidFabric = Platform.OS === 'android' && !!(globalThis as any)?.nativeFabricUIManager;
+if (Platform.OS === 'android' && !isAndroidFabric && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
@@ -166,35 +167,36 @@ type AdjustmentRow = {
 };
 
 const fetchRecentStockAdjustments = async (): Promise<{ data: AdjustmentRow[]; error: any }> => {
-    const primary = await supabase
-        .from('stock_adjustments')
-        .select('id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp')
-        .order('timestamp', { ascending: false })
-        .limit(50);
+    const selectVariants = [
+        'id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp',
+        'id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, timestamp',
+        'id, part_id, part_name, previous_quantity, new_quantity, delta, reason, timestamp',
+    ];
 
-    if (!primary.error) {
-        return {
-            data: (primary.data || []) as AdjustmentRow[],
-            error: null,
-        };
-    }
+    let lastError: any = null;
+    for (const selectClause of selectVariants) {
+        const res = await supabase
+            .from('stock_adjustments')
+            .select(selectClause)
+            .order('timestamp', { ascending: false })
+            .limit(50);
 
-    const fallback = await supabase
-        .from('stock_adjustments')
-        .select('id, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp')
-        .order('timestamp', { ascending: false })
-        .limit(50);
+        if (!res.error) {
+            return {
+                data: (res.data || []) as unknown as AdjustmentRow[],
+                error: null,
+            };
+        }
 
-    if (!fallback.error) {
-        return {
-            data: (fallback.data || []) as AdjustmentRow[],
-            error: null,
-        };
+        lastError = res.error;
+        const message = String(res.error?.message || '').toLowerCase();
+        const isMissingColumnError = res.error?.code === '42703' || message.includes('does not exist');
+        if (!isMissingColumnError) break;
     }
 
     return {
         data: [],
-        error: fallback.error,
+        error: lastError,
     };
 };
 
@@ -1013,12 +1015,12 @@ export default function ReportsPage() {
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
+            <View style={[styles.header, styles.screenGutter, !isWide && styles.headerCompact]}>
                 <View>
                     <Text style={styles.title}>Reports</Text>
                     <Text style={styles.sub}>Monitoring stok engineer & activity logs</Text>
                 </View>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
+                <View style={[styles.headerActions, !isWide && styles.headerActionsCompact]}>
                     <Button
                         icon="download"
                         mode="contained-tonal"
@@ -1035,7 +1037,7 @@ export default function ReportsPage() {
                 </View>
             </View>
 
-            <View style={styles.tabContainer}>
+            <View style={[styles.tabContainer, styles.screenGutter]}>
                 <SegmentedButtons
                     value={tab}
                     onValueChange={v => {
@@ -1058,11 +1060,12 @@ export default function ReportsPage() {
                     data={filteredGroups}
                     keyExtractor={(item) => item.area}
                     renderItem={renderAreaItem}
+                    ItemSeparatorComponent={() => <View style={styles.areaCardSeparator} />}
                     initialNumToRender={3}
                     maxToRenderPerBatch={3}
                     windowSize={5}
                     removeClippedSubviews={true}
-                    contentContainerStyle={{ paddingBottom: 100 }}
+                    contentContainerStyle={styles.monitorListContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
                     ListHeaderComponent={
                         <View style={{ gap: 16, marginBottom: 16 }}>
@@ -1218,7 +1221,7 @@ export default function ReportsPage() {
                     data={deliveries}
                     keyExtractor={(item, index) => String(index)}
                     renderItem={renderDeliveryItem}
-                    contentContainerStyle={{ paddingBottom: 100, gap: 16 }}
+                    contentContainerStyle={styles.defaultListContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
                     ListEmptyComponent={
                         <Text style={{ textAlign: 'center', color: Colors.textMuted, marginTop: 20 }}>No deliveries found.</Text>
@@ -1232,7 +1235,7 @@ export default function ReportsPage() {
                     data={adjustments}
                     keyExtractor={(item) => item.id}
                     renderItem={renderLogItem}
-                    contentContainerStyle={{ paddingBottom: 100, gap: 16 }}
+                    contentContainerStyle={styles.defaultListContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
                     ListEmptyComponent={
                         <Text style={{ textAlign: 'center', color: Colors.textMuted, marginTop: 20 }}>No adjustments found.</Text>
@@ -1249,12 +1252,18 @@ export default function ReportsPage() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.bg },
-    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingTop: 20 },
+    screenGutter: { paddingHorizontal: 20 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, paddingTop: 20, gap: 12 },
+    headerCompact: { flexDirection: 'column', alignItems: 'flex-start' },
+    headerActions: { flexDirection: 'row', gap: 8 },
+    headerActionsCompact: { width: '100%', flexWrap: 'wrap' },
     title: { fontSize: 28, fontWeight: '800', color: Colors.text, letterSpacing: -0.5 },
     sub: { fontSize: 14, color: Colors.textSecondary, marginTop: 4 },
 
     tabContainer: { marginBottom: 20 },
     segmentedBtn: { borderRadius: 12 },
+    monitorListContent: { paddingTop: 4, paddingBottom: 100, paddingHorizontal: 20 },
+    defaultListContent: { paddingBottom: 100, paddingHorizontal: 20, gap: 16 },
 
     monitorControlCard: { padding: 14, gap: 12 },
     monitorControlHead: {
@@ -1345,9 +1354,10 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.card, borderRadius: 14, borderWidth: 1, borderColor: Colors.border,
         overflow: 'hidden',
     },
+    areaCardSeparator: { height: 12 },
     areaHeader: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        padding: 14, gap: 10,
+        paddingHorizontal: 16, paddingVertical: 16, gap: 10,
     },
     areaHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
     areaIcon: { width: 38, height: 38, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },

@@ -10,7 +10,8 @@ import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeR
 import { adminStyles } from '../../src/styles/adminStyles';
 import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+const isAndroidFabric = Platform.OS === 'android' && !!(globalThis as any)?.nativeFabricUIManager;
+if (Platform.OS === 'android' && !isAndroidFabric && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 

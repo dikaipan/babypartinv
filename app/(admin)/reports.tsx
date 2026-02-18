@@ -165,20 +165,48 @@ type AdjustmentRow = {
     timestamp: string;
 };
 
+const fetchRecentStockAdjustments = async (): Promise<{ data: AdjustmentRow[]; error: any }> => {
+    const primary = await supabase
+        .from('stock_adjustments')
+        .select('id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp')
+        .order('timestamp', { ascending: false })
+        .limit(50);
+
+    if (!primary.error) {
+        return {
+            data: (primary.data || []) as AdjustmentRow[],
+            error: null,
+        };
+    }
+
+    const fallback = await supabase
+        .from('stock_adjustments')
+        .select('id, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp')
+        .order('timestamp', { ascending: false })
+        .limit(50);
+
+    if (!fallback.error) {
+        return {
+            data: (fallback.data || []) as AdjustmentRow[],
+            error: null,
+        };
+    }
+
+    return {
+        data: [],
+        error: fallback.error,
+    };
+};
+
 const fetchReportsData = async (): Promise<ReportsData> => {
     const now = Date.now();
     const usageCutoffIso = new Date(now - (MONITOR_USAGE_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
     const openRequestCutoffIso = new Date(now - (MONITOR_OPEN_REQUEST_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
 
-    const [profilesRes, stockRes, partsRes, adjRes, delRes, openReqRes, usageRes] = await Promise.all([
+    const [profilesRes, stockRes, partsRes, delRes, openReqRes, usageRes, adjRes] = await Promise.all([
         supabase.from('profiles').select('id, name, email, role, is_active, employee_id, location').eq('role', 'engineer'),
         supabase.from('engineer_stock').select('engineer_id, part_id, quantity'),
         supabase.from('inventory').select('id, part_name, total_stock, min_stock'),
-        supabase
-            .from('stock_adjustments')
-            .select('id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp')
-            .order('timestamp', { ascending: false })
-            .limit(50),
         supabase
             .from('monthly_requests')
             .select('id, submitted_at, delivered_at, confirmed_at, items, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)')
@@ -194,19 +222,22 @@ const fetchReportsData = async (): Promise<ReportsData> => {
             .from('usage_reports')
             .select('date, items')
             .gte('date', usageCutoffIso),
+        fetchRecentStockAdjustments(),
     ]);
 
     const firstError = [
         profilesRes.error,
         stockRes.error,
         partsRes.error,
-        adjRes.error,
         delRes.error,
         openReqRes.error,
         usageRes.error,
     ].find(Boolean);
 
     if (firstError) throw firstError;
+    if (adjRes.error) {
+        console.warn('[reports] stock_adjustments query failed:', adjRes.error);
+    }
 
     const usageReportsRaw = Array.isArray(usageRes.data) ? (usageRes.data as UsageReportRow[]) : [];
     const usageReports = usageReportsRaw.map((row) => ({
@@ -214,7 +245,7 @@ const fetchReportsData = async (): Promise<ReportsData> => {
         items: row.items,
     }));
     const profilesById = new Map((profilesRes.data || []).map((profile) => [profile.id, profile.name]));
-    const adjustments = ((adjRes.data || []) as AdjustmentRow[]).map((row) => ({
+    const adjustments = (adjRes.data || []).map((row) => ({
         ...row,
         engineer_name: row.engineer_name || (row.engineer_id ? profilesById.get(row.engineer_id) : null) || null,
     }));

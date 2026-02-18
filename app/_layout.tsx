@@ -169,6 +169,7 @@ export default function RootLayout() {
         const ignoredWarnings = [
             'Animated: `useNativeDriver` is not supported because the native animated module is missing.',
             "Added non-passive event listener to a scroll-blocking 'wheel' event.",
+            'Cannot record touch end without a touch start.',
         ];
 
         LogBox.ignoreLogs(ignoredWarnings);

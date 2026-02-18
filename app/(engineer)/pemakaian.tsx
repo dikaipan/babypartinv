@@ -23,15 +23,43 @@ const SO_NUMBER_MAX_DIGIT_LENGTH = 20;
 const USAGE_HISTORY_LIMIT = 5;
 const SO_NUMBER_PATTERN = new RegExp(`^\\d{${SO_NUMBER_MIN_DIGIT_LENGTH},${SO_NUMBER_MAX_DIGIT_LENGTH}}$`);
 
+const isUsageReportsDateMissingError = (error: unknown) => {
+    if (!error || typeof error !== 'object') return false;
+    const message = String((error as { message?: unknown }).message || '').toLowerCase();
+    return message.includes('usage_reports') && message.includes('date') && (
+        message.includes('column')
+        || message.includes('schema cache')
+        || message.includes('could not find')
+    );
+};
+
 const fetchEngineerUsageReports = async (engineerId: string): Promise<UsageReport[]> => {
-    const { data, error } = await supabase
+    let response: any = await supabase
         .from('usage_reports')
-        .select('*')
+        .select('id, engineer_id, so_number, description, items, date, created_at')
         .eq('engineer_id', engineerId)
         .order('date', { ascending: false })
         .limit(USAGE_HISTORY_LIMIT);
-    if (error) throw error;
-    return data || [];
+
+    if (response.error && isUsageReportsDateMissingError(response.error)) {
+        response = await supabase
+            .from('usage_reports')
+            .select('id, engineer_id, so_number, description, items, created_at')
+            .eq('engineer_id', engineerId)
+            .order('created_at', { ascending: false })
+            .limit(USAGE_HISTORY_LIMIT);
+    }
+
+    if (response.error) throw response.error;
+
+    const rows = Array.isArray(response.data)
+        ? (response.data as (UsageReport & { date?: string | null; created_at?: string | null })[])
+        : [];
+
+    return rows.map((row) => ({
+        ...row,
+        date: row.date || row.created_at || new Date().toISOString(),
+    }));
 };
 
 const fetchEngineerUsageStocks = async (engineerId: string): Promise<StockWithName[]> => {

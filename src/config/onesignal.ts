@@ -38,22 +38,31 @@ type SyncPushIdentityResult = {
 
 let oneSignalWebInitPromise: Promise<OneSignalWebSdk> | null = null;
 let oneSignalWebInitialized = false;
+let oneSignalWebUnsupportedReason: string | null = null;
 const ONE_SIGNAL_WEB_INIT_FLAG = '__babypartOneSignalWebInitialized';
 
+const toErrorMessage = (error: unknown) =>
+    error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+            ? error
+            : '';
+
 const isSdkAlreadyInitializedError = (error: unknown) => {
-    const message =
-        error instanceof Error
-            ? error.message
-            : typeof error === 'string'
-                ? error
-                : '';
+    const message = toErrorMessage(error);
     return message.toLowerCase().includes('already initialized');
+};
+
+const isWebPushNotConfiguredError = (error: unknown) => {
+    const message = toErrorMessage(error).toLowerCase();
+    return message.includes('app not configured for web push');
 };
 
 const getWebPushSubscription = (sdk: OneSignalWebSdk): OneSignalWebPushSubscription | undefined =>
     sdk.User?.PushSubscription || sdk.User?.pushSubscription;
 
 const getWebPushUnsupportedReason = (): string | null => {
+    if (oneSignalWebUnsupportedReason) return oneSignalWebUnsupportedReason;
     if (Platform.OS !== 'web') return 'Web push hanya tersedia di platform web.';
     if (typeof window === 'undefined' || typeof navigator === 'undefined') return 'Runtime browser tidak tersedia.';
     if (!('Notification' in window)) return 'Browser tidak mendukung Notification API.';
@@ -73,6 +82,10 @@ const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
         throw new Error('OneSignal web SDK hanya tersedia di web.');
     }
 
+    if (oneSignalWebUnsupportedReason) {
+        throw new Error(oneSignalWebUnsupportedReason);
+    }
+
     if (oneSignalWebInitPromise) {
         return oneSignalWebInitPromise;
     }
@@ -90,6 +103,11 @@ const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
                             allowLocalhostAsSecureOrigin: true,
                         });
                     } catch (error) {
+                        if (isWebPushNotConfiguredError(error)) {
+                            oneSignalWebUnsupportedReason =
+                                'OneSignal App belum dikonfigurasi untuk Web Push di dashboard OneSignal.';
+                            throw new Error(oneSignalWebUnsupportedReason);
+                        }
                         if (!isSdkAlreadyInitializedError(error)) {
                             throw error;
                         }
@@ -222,7 +240,7 @@ export async function syncPushIdentity(
                 pushToken: null,
                 optedIn: false,
                 permissionGranted: false,
-                reason: error instanceof Error ? error.message : 'Sinkronisasi OneSignal web gagal.',
+                reason: toErrorMessage(error) || 'Sinkronisasi OneSignal web gagal.',
             };
         }
     }

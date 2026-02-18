@@ -148,6 +148,16 @@ const REQUEST_STATUS_COLORS: Record<string, string> = {
     cancelled: Colors.textMuted,
 };
 
+const isUsageReportsDateMissingError = (error: unknown) => {
+    if (!error || typeof error !== 'object') return false;
+    const message = String((error as { message?: unknown }).message || '').toLowerCase();
+    return message.includes('usage_reports') && message.includes('date') && (
+        message.includes('column')
+        || message.includes('schema cache')
+        || message.includes('could not find')
+    );
+};
+
 const formatDateKey = (date: Date): string => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -325,12 +335,25 @@ type AnalitikData = {
 };
 
 const fetchAnalitikData = async (): Promise<AnalitikData> => {
-    const [statusSummary, usageRowsRes, engineersRes] = await Promise.all([
-        fetchRequestStatusSummary(),
-        supabase
+    const fetchUsageRows = async () => {
+        let response: any = await supabase
             .from('usage_reports')
             .select('engineer_id, items, date, created_at')
-            .order('date', { ascending: false }),
+            .order('date', { ascending: false });
+
+        if (response.error && isUsageReportsDateMissingError(response.error)) {
+            response = await supabase
+                .from('usage_reports')
+                .select('engineer_id, items, created_at')
+                .order('created_at', { ascending: false });
+        }
+
+        return response;
+    };
+
+    const [statusSummary, usageRowsRes, engineersRes] = await Promise.all([
+        fetchRequestStatusSummary(),
+        fetchUsageRows(),
         supabase.from('profiles').select('id, name, employee_id').eq('role', 'engineer'),
     ]);
 

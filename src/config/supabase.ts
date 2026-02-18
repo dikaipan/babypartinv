@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, processLock } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
@@ -30,5 +30,7 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: Platform.OS === 'web', // Must be true on web for password reset/email confirm links
+        // Avoid browser Navigator LockManager timeout issues on some web runtimes.
+        lock: Platform.OS === 'web' ? processLock : undefined,
     },
 });

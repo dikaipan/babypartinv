@@ -2,6 +2,8 @@
 # Auth callback pages are served as-is (they are standalone HTML)
 /reset-password.html  /reset-password.html  200
 /confirm.html         /confirm.html         200
+/assets/*             /assets/:splat        200
+/_expo/*              /_expo/:splat         200
 
 # All other routes fallback to the Expo SPA
 /*  /index.html  200

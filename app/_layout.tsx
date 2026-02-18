@@ -5,7 +5,6 @@ import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme, Colors } from '../src/config/theme';
 import { useAuthStore } from '../src/stores/authStore';
 import { initOneSignal } from '../src/config/onesignal';
@@ -17,7 +16,8 @@ export default function RootLayout() {
     const segments = useSegments();
     const router = useRouter();
     const [fontsLoaded] = useFonts({
-        ...MaterialCommunityIcons.font,
+        // Avoid Cloudflare path issues with "@expo/..." font asset paths on web exports.
+        'material-community': require('react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf'),
     });
 
     useEffect(() => {

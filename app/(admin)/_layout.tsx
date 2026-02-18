@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect } from 'react';
 import { View, StyleSheet, Pressable, ScrollView, useWindowDimensions, Platform, Image } from 'react-native';
 import { Text } from 'react-native-paper';
 import { Slot, useRouter, usePathname } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import { useAuthStore } from '../../src/stores/authStore';
+import { useAdminUiStore, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
 const menuItems = [
     { key: 'dashboard', label: 'Dashboard', icon: 'view-dashboard' as const, path: '/(admin)/dashboard' },
@@ -19,12 +20,22 @@ const menuItems = [
 ];
 
 export default function AdminLayout() {
-    const { user, signOut } = useAuthStore();
+    const { user } = useAuthStore();
     const router = useRouter();
     const pathname = usePathname();
     const { width } = useWindowDimensions();
-    const [sidebarOpen, setSidebarOpen] = useState(width >= 768);
+    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
+    const setSidebarOpen = useAdminUiStore((state) => state.setSidebarOpen);
+    const toggleSidebar = useAdminUiStore((state) => state.toggleSidebar);
     const isWide = width >= 768;
+
+    useEffect(() => {
+        if (!isWide) {
+            setSidebarOpen(false);
+        } else if (!sidebarOpen) {
+            setSidebarOpen(true);
+        }
+    }, [isWide, setSidebarOpen]);
 
     const navigate = (path: string) => {
         router.push(path as any);
@@ -38,46 +49,86 @@ export default function AdminLayout() {
     return (
         <View style={styles.root}>
             {/* Sidebar */}
-            {(sidebarOpen || isWide) && (
-                <View style={[styles.sidebar, !isWide && styles.sidebarOverlay]}>
-                    <View style={styles.brand}>
-                        <View style={styles.brandIcon}>
-                            <Image source={require('../../assets/logo.png')} style={styles.brandIconImage} resizeMode="cover" />
-                        </View>
-                        <View>
-                            <Text style={styles.brandTitle}>BabyPart</Text>
-                            <Text style={styles.brandSub}>Admin Panel</Text>
-                        </View>
-                    </View>
+            {!isWide && sidebarOpen && (
+                <Pressable
+                    onPress={() => setSidebarOpen(false)}
+                    style={styles.backdrop}
+                    accessibilityRole="button"
+                    accessibilityLabel="Tutup sidebar"
+                />
+            )}
 
-                    <ScrollView style={styles.menu} indicatorStyle="black">
-                        {menuItems.map(item => (
+            {(isWide || sidebarOpen) && (
+                <View style={[styles.sidebar, isWide && !sidebarOpen && styles.sidebarCollapsed, !isWide && styles.sidebarOverlay]}>
+                    {isWide && !sidebarOpen ? (
+                        <View style={styles.collapsedRail}>
                             <Pressable
-                                key={item.key}
-                                style={[styles.menuItem, activeKey === item.key && styles.menuItemActive]}
-                                onPress={() => navigate(item.path)}
+                                onPress={toggleSidebar}
+                                style={styles.sidebarToggle}
+                                accessibilityRole="button"
+                                accessibilityLabel="Buka sidebar"
                             >
                                 <MaterialCommunityIcons
-                                    name={item.icon}
+                                    name="chevron-right"
                                     size={20}
-                                    color={activeKey === item.key ? Colors.primary : Colors.textMuted}
+                                    color={Colors.textSecondary}
                                 />
-                                <Text style={[styles.menuLabel, activeKey === item.key && styles.menuLabelActive]}>
-                                    {item.label}
-                                </Text>
                             </Pressable>
-                        ))}
-                    </ScrollView>
+                        </View>
+                    ) : (
+                        <>
+                            <View style={styles.brand}>
+                                <View style={styles.brandIcon}>
+                                    <Image source={require('../../assets/logo.png')} style={styles.brandIconImage} resizeMode="cover" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.brandTitle}>BabyPart</Text>
+                                    <Text style={styles.brandSub}>Admin Panel</Text>
+                                </View>
+                                <Pressable
+                                    onPress={toggleSidebar}
+                                    style={styles.sidebarToggle}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={isWide ? 'Collapse sidebar' : 'Tutup sidebar'}
+                                >
+                                    <MaterialCommunityIcons
+                                        name={isWide ? 'chevron-left' : 'close'}
+                                        size={20}
+                                        color={Colors.textSecondary}
+                                    />
+                                </Pressable>
+                            </View>
 
-                    <View style={styles.userCard}>
-                        <View style={styles.userAvatar}>
-                            <Text style={styles.userAvatarText}>{initials}</Text>
-                        </View>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.userName} numberOfLines={1}>{user?.name}</Text>
-                            <Text style={styles.userRole}>Admin</Text>
-                        </View>
-                    </View>
+                            <ScrollView style={styles.menu} indicatorStyle="black">
+                                {menuItems.map(item => (
+                                    <Pressable
+                                        key={item.key}
+                                        style={[styles.menuItem, activeKey === item.key && styles.menuItemActive]}
+                                        onPress={() => navigate(item.path)}
+                                    >
+                                        <MaterialCommunityIcons
+                                            name={item.icon}
+                                            size={20}
+                                            color={activeKey === item.key ? Colors.primary : Colors.textMuted}
+                                        />
+                                        <Text style={[styles.menuLabel, activeKey === item.key && styles.menuLabelActive]}>
+                                            {item.label}
+                                        </Text>
+                                    </Pressable>
+                                ))}
+                            </ScrollView>
+
+                            <View style={styles.userCard}>
+                                <View style={styles.userAvatar}>
+                                    <Text style={styles.userAvatarText}>{initials}</Text>
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.userName} numberOfLines={1}>{user?.name}</Text>
+                                    <Text style={styles.userRole}>Admin</Text>
+                                </View>
+                            </View>
+                        </>
+                    )}
                 </View>
             )}
 
@@ -96,6 +147,15 @@ export default function AdminLayout() {
 
 const styles = StyleSheet.create({
     root: { flex: 1, flexDirection: 'row', backgroundColor: Colors.bg },
+    backdrop: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        backgroundColor: 'rgba(0,0,0,0.28)',
+        zIndex: 90,
+    },
     sidebar: {
         width: 240,
         backgroundColor: Colors.card,
@@ -103,9 +163,18 @@ const styles = StyleSheet.create({
         borderRightColor: Colors.border,
         paddingTop: Platform.OS === 'web' ? 20 : 48,
     },
+    sidebarCollapsed: {
+        width: ADMIN_SIDEBAR_COLLAPSED_WIDTH,
+        paddingTop: Platform.OS === 'web' ? 20 : 48,
+    },
     sidebarOverlay: {
         position: 'absolute', left: 0, top: 0, bottom: 0, zIndex: 100, elevation: 10,
         shadowColor: '#000', shadowOffset: { width: 2, height: 0 }, shadowOpacity: 0.25, shadowRadius: 3.84,
+    },
+    collapsedRail: {
+        flex: 1,
+        alignItems: 'center',
+        paddingTop: 6,
     },
     brand: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 20, marginBottom: 10 },
     brandIcon: {
@@ -116,6 +185,16 @@ const styles = StyleSheet.create({
     brandIconImage: { width: '100%', height: '100%', transform: [{ scale: 1.62 }] },
     brandTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: 0.5 },
     brandSub: { fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
+    sidebarToggle: {
+        width: 28,
+        height: 28,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.surface,
+        borderWidth: 1,
+        borderColor: Colors.border,
+    },
     menu: { flex: 1, paddingHorizontal: 12 },
     menuItem: {
         flexDirection: 'row', alignItems: 'center', gap: 12,

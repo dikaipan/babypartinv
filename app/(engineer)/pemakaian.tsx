@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, Pressable, BackHandler } from 'react-native';
+import { View, StyleSheet, FlatList, RefreshControl, Pressable, BackHandler, Platform } from 'react-native';
 import { Text, TextInput, IconButton, Searchbar } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,15 +7,33 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetBackdropProps, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
+import WebPullToRefreshBanner from '../../src/components/WebPullToRefreshBanner';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useWebPullToRefresh } from '../../src/hooks/useWebPullToRefresh';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
 import { UsageReport, UsageItem, EngineerStock } from '../../src/types';
 
 type StockWithName = EngineerStock & { part_name?: string };
-const SO_NUMBER_DIGIT_LENGTH = 13;
-const SO_NUMBER_PATTERN = new RegExp(`^\\d{${SO_NUMBER_DIGIT_LENGTH}}$`);
+const SO_NUMBER_MIN_DIGIT_LENGTH = 8; // YYYYMMDD
+const SO_NUMBER_MAX_DIGIT_LENGTH = 20;
+const SO_NUMBER_PATTERN = new RegExp(`^\\d{${SO_NUMBER_MIN_DIGIT_LENGTH},${SO_NUMBER_MAX_DIGIT_LENGTH}}$`);
+
+const hasValidSoDatePrefix = (value: string): boolean => {
+    const datePrefix = value.slice(0, SO_NUMBER_MIN_DIGIT_LENGTH);
+    if (!/^\d{8}$/.test(datePrefix)) return false;
+
+    const year = Number(datePrefix.slice(0, 4));
+    const month = Number(datePrefix.slice(4, 6));
+    const day = Number(datePrefix.slice(6, 8));
+
+    if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+    const parsed = new Date(year, month - 1, day);
+    return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day;
+};
 
 export default function PemakaianPage() {
     const { user } = useAuthStore();
@@ -107,6 +125,13 @@ export default function PemakaianPage() {
 
     useFocusEffect(useCallback(() => { loadReports(); }, [loadReports]));
     useFocusEffect(useCallback(() => { loadStocks(); }, [loadStocks]));
+    useEffect(() => {
+        loadReports();
+        loadStocks();
+    }, [loadReports, loadStocks]);
+    useWebAutoRefresh(() => {
+        void Promise.all([loadReports(), loadStocks()]);
+    }, { enabled: !!user });
     useFocusEffect(useCallback(() => {
         const onBackPress = () => {
             if (step === 'quantity') {
@@ -142,11 +167,16 @@ export default function PemakaianPage() {
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await loadReports();
+            await Promise.all([loadReports(), loadStocks()]);
         } finally {
             setRefreshing(false);
         }
     };
+    const webPull = useWebPullToRefresh({
+        onRefresh,
+        refreshing,
+        enabled: !!user,
+    });
 
     const openSelectSheet = () => {
         setSearchQuery('');
@@ -204,7 +234,7 @@ export default function PemakaianPage() {
         return map;
     }, [stocks]);
     const handleChangeSoNumber = (value: string) => {
-        const numericOnly = value.replace(/\D/g, '').slice(0, SO_NUMBER_DIGIT_LENGTH);
+        const numericOnly = value.replace(/\D/g, '').slice(0, SO_NUMBER_MAX_DIGIT_LENGTH);
         setSoNumber(numericOnly);
     };
 
@@ -213,7 +243,11 @@ export default function PemakaianPage() {
         const normalizedSoNumber = soNumber.trim();
         if (!normalizedSoNumber) { setError('Nomor SO / Tiket wajib diisi'); return; }
         if (!SO_NUMBER_PATTERN.test(normalizedSoNumber)) {
-            setError('Format Nomor SO harus 13 digit angka (contoh: 2026021700530)');
+            setError('Nomor SO / Tiket minimal 8 digit angka (contoh: 20260217).');
+            return;
+        }
+        if (!hasValidSoDatePrefix(normalizedSoNumber)) {
+            setError('8 digit pertama Nomor SO / Tiket harus tanggal valid format YYYYMMDD (contoh: 20260217).');
             return;
         }
         if (items.length === 0) { setError('Tambahkan minimal 1 barang'); return; }
@@ -288,9 +322,20 @@ export default function PemakaianPage() {
             <FlatList
                 data={reports}
                 keyExtractor={r => r.id}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                onScroll={webPull.onScroll}
+                onTouchStart={webPull.onTouchStart}
+                onTouchMove={webPull.onTouchMove}
+                onTouchEnd={webPull.onTouchEnd}
+                scrollEventThrottle={16}
                 ListHeaderComponent={
                     <>
+                        <WebPullToRefreshBanner
+                            enabled={webPull.enabled}
+                            pullDistance={webPull.pullDistance}
+                            ready={webPull.ready}
+                            refreshing={refreshing}
+                        />
                         <View style={styles.header}>
                             <View style={styles.headerSpacer} />
                             <Text style={styles.pageTitle}>Pemakaian</Text>
@@ -314,14 +359,14 @@ export default function PemakaianPage() {
                                     value={soNumber}
                                     onChangeText={handleChangeSoNumber}
                                     keyboardType="number-pad"
-                                    maxLength={SO_NUMBER_DIGIT_LENGTH}
-                                    placeholder="Contoh: 2026021700530"
+                                    maxLength={SO_NUMBER_MAX_DIGIT_LENGTH}
+                                    placeholder="Contoh: 20260217 atau 2026021700530"
                                     style={styles.input}
                                     outlineColor={Colors.border}
                                     activeOutlineColor={Colors.primary}
                                     textColor={Colors.text}
                                 />
-                                <Text style={styles.inputHint}>Format: 13 digit angka (contoh: 2026021700530)</Text>
+                                <Text style={styles.inputHint}>Minimal 8 digit angka, diawali tanggal YYYYMMDD (contoh: 20260217)</Text>
                                 <TextInput
                                     mode="outlined"
                                     label="Catatan (Opsional)"

@@ -12,10 +12,11 @@ export default function RegisterPage() {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [employeeId, setEmployeeId] = useState('');
     const [location, setLocation] = useState('');
     const [error, setError] = useState('');
-    const [success, setSuccess] = useState(false);
+    const [successMessage, setSuccessMessage] = useState('');
     const { signUp, loading } = useAuthStore();
     const router = useRouter();
 
@@ -32,9 +33,19 @@ export default function RegisterPage() {
             return;
         }
         try {
-            await signUp(email.trim(), password, toTitleCase(name.trim()), employeeId.trim(), normalizeArea(location));
-            setSuccess(true);
-            setTimeout(() => router.back(), 2000);
+            const result = await signUp(
+                email.trim(),
+                password,
+                toTitleCase(name.trim()),
+                employeeId.trim(),
+                normalizeArea(location),
+            );
+            setSuccessMessage(
+                result.requiresEmailConfirmation
+                    ? 'Registrasi berhasil. Cek email untuk konfirmasi akun sebelum login.'
+                    : 'Registrasi berhasil. Silakan login.',
+            );
+            setTimeout(() => router.replace('/(auth)/login'), 2500);
         } catch (e: any) {
             setError(e.message || 'Registrasi gagal');
         }
@@ -47,7 +58,7 @@ export default function RegisterPage() {
                     <View style={styles.header}>
                         <MaterialCommunityIcons name="account-plus" size={40} color={Colors.primary} />
                         <Text style={styles.title}>Daftar Akun</Text>
-                        <Text style={styles.subtitle}>Buat akun engineer baru</Text>
+                        <Text style={styles.subtitle}>Buat akun engineer baru dan konfirmasi lewat email.</Text>
                     </View>
 
                     <View style={styles.form}>
@@ -63,7 +74,16 @@ export default function RegisterPage() {
                             left={<TextInput.Icon icon="email-outline" />} style={styles.input}
                             outlineColor={Colors.border} activeOutlineColor={Colors.primary} textColor={Colors.text} />
                         <TextInput mode="outlined" label="Password" value={password} onChangeText={setPassword}
-                            secureTextEntry left={<TextInput.Icon icon="lock-outline" />} style={styles.input}
+                            secureTextEntry={!showPassword}
+                            left={<TextInput.Icon icon="lock-outline" />}
+                            right={
+                                <TextInput.Icon
+                                    icon={showPassword ? 'eye-off' : 'eye'}
+                                    onPress={() => setShowPassword((prev) => !prev)}
+                                    forceTextInputFocus={false}
+                                />
+                            }
+                            style={styles.input}
                             outlineColor={Colors.border} activeOutlineColor={Colors.primary} textColor={Colors.text} />
                         <TextInput mode="outlined" label="Area Group *" placeholder="Contoh: AMBON, JAKARTA"
                             value={location} onChangeText={setLocation} autoCapitalize="characters"
@@ -81,8 +101,8 @@ export default function RegisterPage() {
                 </View>
             </ScrollView>
             <AppSnackbar visible={!!error} onDismiss={() => setError('')} duration={3000}>{error}</AppSnackbar>
-            <AppSnackbar visible={success} onDismiss={() => setSuccess(false)} duration={2000}
-                style={{ backgroundColor: Colors.success }}>Registrasi berhasil! Mengalihkan...</AppSnackbar>
+            <AppSnackbar visible={!!successMessage} onDismiss={() => setSuccessMessage('')} duration={3200}
+                style={{ backgroundColor: Colors.success }}>{successMessage}</AppSnackbar>
         </KeyboardAvoidingView>
     );
 }

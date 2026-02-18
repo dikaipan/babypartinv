@@ -14,6 +14,18 @@ export default function LoginPage() {
     const [error, setError] = useState('');
     const { signIn, loading } = useAuthStore();
 
+    const toLoginErrorMessage = (err: any) => {
+        const rawMessage = typeof err?.message === 'string' ? err.message : '';
+        const message = rawMessage.toLowerCase();
+        if (message.includes('email not confirmed')) {
+            return 'Email belum dikonfirmasi. Cek inbox/spam lalu klik link konfirmasi.';
+        }
+        if (message.includes('invalid login credentials')) {
+            return 'Email atau password salah.';
+        }
+        return rawMessage || 'Login gagal';
+    };
+
     const handleLogin = async () => {
         if (!email || !password) {
             setError('Email dan password wajib diisi');
@@ -22,7 +34,7 @@ export default function LoginPage() {
         try {
             await signIn(email.trim(), password);
         } catch (e: any) {
-            setError(e.message || 'Login gagal');
+            setError(toLoginErrorMessage(e));
         }
     };
 

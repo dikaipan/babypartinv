@@ -7,7 +7,9 @@ import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
 import { InventoryPart } from '../../src/types';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 import { adminStyles } from '../../src/styles/adminStyles';
+import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
 type StockEditorMode = 'adjust' | 'add';
 type SummaryFilter = 'all' | 'low' | 'out';
@@ -42,7 +44,8 @@ export default function InventoryPage() {
     const [success, setSuccess] = useState('');
 
     const isWide = width >= 768;
-    const sidebarWidth = isWide ? 240 : 0;
+    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
+    const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
     const effectiveWidth = width - sidebarWidth;
     const numColumns = isWide ? 2 : 1;
     const cardGap = 16;
@@ -65,6 +68,7 @@ export default function InventoryPage() {
     useEffect(() => {
         load();
     }, [load]);
+    useWebAutoRefresh(load);
 
     const onRefresh = async () => {
         setRefreshing(true);

@@ -1,13 +1,16 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Modal as RNModal } from 'react-native';
+import { View, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Modal as RNModal, Platform } from 'react-native';
 import { Text, IconButton } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
+import WebPullToRefreshBanner from '../../src/components/WebPullToRefreshBanner';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useWebPullToRefresh } from '../../src/hooks/useWebPullToRefresh';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
 import { EngineerStock, InventoryPart } from '../../src/types';
@@ -149,6 +152,10 @@ export default function StokPage() {
     useFocusEffect(useCallback(() => {
         load();
     }, [load]));
+    useEffect(() => {
+        load();
+    }, [load]);
+    useWebAutoRefresh(load, { enabled: !!user });
 
     const onRefresh = async () => {
         setRefreshing(true);
@@ -158,6 +165,11 @@ export default function StokPage() {
             setRefreshing(false);
         }
     };
+    const webPull = useWebPullToRefresh({
+        onRefresh,
+        refreshing,
+        enabled: !!user,
+    });
 
     const filtered = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -323,10 +335,21 @@ export default function StokPage() {
             <FlatList
                 data={filtered}
                 keyExtractor={(item) => `${item.engineer_id}-${item.part_id}`}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                onScroll={webPull.onScroll}
+                onTouchStart={webPull.onTouchStart}
+                onTouchMove={webPull.onTouchMove}
+                onTouchEnd={webPull.onTouchEnd}
+                scrollEventThrottle={16}
                 contentContainerStyle={{ paddingTop: 0, paddingBottom: Math.max(insets.bottom + 86, 110), gap: 12 }}
                 ListHeaderComponent={
                     <>
+                        <WebPullToRefreshBanner
+                            enabled={webPull.enabled}
+                            pullDistance={webPull.pullDistance}
+                            ready={webPull.ready}
+                            refreshing={refreshing}
+                        />
                         <View style={styles.header}>
                             <View style={styles.headerSpacer} />
                             <Text style={styles.pageTitle}>Stok</Text>

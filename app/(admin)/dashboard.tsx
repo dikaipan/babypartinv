@@ -4,10 +4,13 @@ import { Text, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '../../src/config/theme';
+import AppSnackbar from '../../src/components/AppSnackbar';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
+import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
 export default function DashboardPage() {
     const { user } = useAuthStore();
@@ -17,6 +20,11 @@ export default function DashboardPage() {
     const [refreshing, setRefreshing] = useState(false);
     const [stats, setStats] = useState({ totalUsers: 0, admins: 0, engineers: 0, notifications: 0 });
     const [kpi, setKpi] = useState<any>(null);
+    const [error, setError] = useState('');
+    const isWide = width >= 768;
+    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
+    const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
+    const effectiveWidth = width - sidebarWidth;
 
     const greeting = () => {
         const h = new Date().getHours();
@@ -27,24 +35,33 @@ export default function DashboardPage() {
     };
 
     const load = useCallback(async () => {
-        const [usersRes, notifRes, kpiRes] = await Promise.all([
-            supabase.from('profiles').select('role', { count: 'exact' }),
-            supabase.from('notifications').select('id', { count: 'exact' }).eq('is_read', false),
-            supabase.rpc('admin_kpi_summary'),
-        ]);
+        try {
+            const [usersRes, notifRes, kpiRes] = await Promise.all([
+                supabase.from('profiles').select('role', { count: 'exact' }),
+                supabase.from('notifications').select('id', { count: 'exact' }).eq('is_read', false),
+                supabase.rpc('admin_kpi_summary'),
+            ]);
 
-        const profiles = usersRes.data || [];
-        const adminCount = profiles.filter((p: any) => p.role === 'admin').length;
-        const engineerCount = profiles.filter((p: any) => p.role === 'engineer').length;
+            if (usersRes.error) throw usersRes.error;
+            if (notifRes.error) throw notifRes.error;
+            if (kpiRes.error) throw kpiRes.error;
 
-        setStats({
-            totalUsers: profiles.length,
-            admins: adminCount,
-            engineers: engineerCount,
-            notifications: notifRes.count || 0,
-        });
+            const profiles = usersRes.data || [];
+            const adminCount = profiles.filter((p: any) => p.role === 'admin').length;
+            const engineerCount = profiles.filter((p: any) => p.role === 'engineer').length;
 
-        if (kpiRes.data) setKpi(Array.isArray(kpiRes.data) ? kpiRes.data[0] : kpiRes.data);
+            setStats({
+                totalUsers: profiles.length,
+                admins: adminCount,
+                engineers: engineerCount,
+                notifications: notifRes.count || 0,
+            });
+
+            if (kpiRes.data) setKpi(Array.isArray(kpiRes.data) ? kpiRes.data[0] : kpiRes.data);
+            setError('');
+        } catch (err: any) {
+            setError(err?.message || 'Gagal memuat dashboard.');
+        }
     }, []);
 
     // Reload when screen comes into focus
@@ -57,6 +74,7 @@ export default function DashboardPage() {
     useEffect(() => {
         load();
     }, [load]);
+    useWebAutoRefresh(load);
 
     // Reload when app comes from background to active (e.g. idle tab wake)
     useEffect(() => {
@@ -77,7 +95,7 @@ export default function DashboardPage() {
         }
     };
 
-    const cardWidth = width >= 768 ? (width - 280) / 4 - 16 : (width - 48) / 2 - 8;
+    const cardWidth = isWide ? (effectiveWidth - 40) / 4 - 16 : (width - 48) / 2 - 8;
 
     const statCards = [
         { label: 'Total Users', value: stats.totalUsers, icon: 'account-group' as const, color: Colors.primary },
@@ -95,12 +113,13 @@ export default function DashboardPage() {
     ];
 
     return (
-        <ScrollView
-            style={styles.container}
-            indicatorStyle="black"
-            contentContainerStyle={styles.scrollContent}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-        >
+        <>
+            <ScrollView
+                style={styles.container}
+                indicatorStyle="black"
+                contentContainerStyle={styles.scrollContent}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+            >
             {/* Header */}
             <View style={styles.header}>
                 <View style={styles.headerContent}>
@@ -169,7 +188,11 @@ export default function DashboardPage() {
                     </View>
                 </View>
             )}
-        </ScrollView>
+            </ScrollView>
+            <AppSnackbar visible={!!error} onDismiss={() => setError('')} duration={3000} style={{ backgroundColor: Colors.danger }}>
+                {error}
+            </AppSnackbar>
+        </>
     );
 }
 

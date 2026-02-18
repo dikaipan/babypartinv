@@ -10,6 +10,7 @@ import { supabase } from '../../src/config/supabase';
 import { MonthlyRequest, RequestItem, Profile, EngineerStock } from '../../src/types';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { normalizeArea } from '../../src/utils/normalizeArea';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 
 type UrgencyLevel = 'Kritis' | 'Tinggi' | 'Normal';
 
@@ -120,15 +121,29 @@ export default function ReviewPage() {
             supabase.from('profiles').select('*').eq('role', 'engineer'),
             supabase.from('engineer_stock').select('*'),
         ]);
+        if (reqRes.error) {
+            setError(reqRes.error.message);
+            return;
+        }
+        if (profilesRes.error) {
+            setError(profilesRes.error.message);
+            return;
+        }
+        if (stockRes.error) {
+            setError(stockRes.error.message);
+            return;
+        }
         setRequests(reqRes.data || []);
         setAllProfiles(profilesRes.data || []);
         setEngineerStocks(stockRes.data || []);
+        setError('');
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
         load();
     }, [load]);
+    useWebAutoRefresh(load);
 
     const onRefresh = async () => {
         setRefreshing(true);

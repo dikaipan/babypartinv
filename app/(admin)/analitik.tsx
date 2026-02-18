@@ -7,6 +7,7 @@ import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
 import { adminStyles } from '../../src/styles/adminStyles';
+import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -333,7 +334,9 @@ export default function AnalitikPage() {
     const debouncedReloadRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const isWide = width >= 768;
-    const effectiveWidth = isWide ? width - 240 : width;
+    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
+    const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
+    const effectiveWidth = width - sidebarWidth;
     const currentMonthLabel = useMemo(
         () => new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }),
         []

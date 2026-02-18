@@ -8,7 +8,9 @@ import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Profile } from '../../src/types';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 import { adminStyles } from '../../src/styles/adminStyles';
+import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
 type UserFormState = {
     name: string;
@@ -65,7 +67,8 @@ export default function UsersPage() {
     const [success, setSuccess] = useState('');
 
     const isWide = width >= 768;
-    const sidebarWidth = isWide ? 240 : 0;
+    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
+    const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
     const effectiveWidth = width - sidebarWidth;
     const numColumns = isWide ? 4 : 1; // 4 cols for users on wide screen
     const cardGap = 16;
@@ -84,6 +87,7 @@ export default function UsersPage() {
     useEffect(() => {
         load();
     }, [load]);
+    useWebAutoRefresh(load);
 
     const onRefresh = async () => {
         setRefreshing(true);

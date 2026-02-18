@@ -10,6 +10,8 @@ import { supabase } from '../../src/config/supabase';
 import { MonthlyRequest, RequestItem, Profile } from '../../src/types';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { NotificationService } from '../../src/services/NotificationService';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
 type DeliveryAdjustment = {
     partId: string;
@@ -79,18 +81,23 @@ export default function ApprovedPage() {
     const [adjustLoading, setAdjustLoading] = useState(false);
 
     const isWide = width >= 768;
-    const sidebarWidth = isWide ? 240 : 0;
+    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
+    const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
     const effectiveWidth = width - sidebarWidth;
     const numColumns = isWide ? 2 : 1;
     const cardGap = 16;
     const cardWidth = (effectiveWidth - 40 - (cardGap * (numColumns - 1))) / numColumns;
 
     const load = useCallback(async () => {
-        const { data } = await supabase
+        const { data, error: loadError } = await supabase
             .from('monthly_requests')
             .select('*, engineer:profiles!monthly_requests_engineer_id_fkey(*)')
             .eq('status', 'approved')
             .order('reviewed_at', { ascending: false });
+        if (loadError) {
+            setError(loadError.message);
+            return;
+        }
 
         const rows = data || [];
         setRequests(rows);
@@ -104,12 +111,14 @@ export default function ApprovedPage() {
             }
             return next;
         });
+        setError('');
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
         load();
     }, [load]);
+    useWebAutoRefresh(load);
 
     const onRefresh = async () => {
         setRefreshing(true);

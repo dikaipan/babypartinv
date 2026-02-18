@@ -1,5 +1,5 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, FlatList, RefreshControl, Pressable, BackHandler } from 'react-native';
+import { View, FlatList, RefreshControl, Pressable, BackHandler, Platform } from 'react-native';
 import { Text, FAB, Portal, Modal, IconButton, Searchbar } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,8 +7,11 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetBackdropProps, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
+import WebPullToRefreshBanner from '../../src/components/WebPullToRefreshBanner';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useWebPullToRefresh } from '../../src/hooks/useWebPullToRefresh';
 import styles from '../../src/styles/requestStyles';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
@@ -94,21 +97,35 @@ export default function RequestPage() {
 
     const load = useCallback(async () => {
         if (!user) return;
-        const { data } = await supabase
+        const { data, error } = await supabase
             .from('monthly_requests')
             .select('*')
             .eq('engineer_id', user.id)
             .neq('status', 'cancelled')
             .order('submitted_at', { ascending: false });
+        if (error) {
+            setError(error.message);
+            return;
+        }
         setRequests(data || []);
+        setError('');
     }, [user]);
 
     const loadParts = async () => {
-        const { data } = await supabase.from('inventory').select('*').order('part_name');
+        const { data, error } = await supabase.from('inventory').select('*').order('part_name');
+        if (error) {
+            setError(error.message);
+            return;
+        }
         setParts(data || []);
+        setError('');
     };
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
+    useEffect(() => {
+        load();
+    }, [load]);
+    useWebAutoRefresh(load, { enabled: !!user });
 
     const onRefresh = async () => {
         setRefreshing(true);
@@ -118,6 +135,11 @@ export default function RequestPage() {
             setRefreshing(false);
         }
     };
+    const webPull = useWebPullToRefresh({
+        onRefresh,
+        refreshing,
+        enabled: !!user,
+    });
 
     const closeCreate = () => {
         setShowCreate(false);
@@ -452,10 +474,21 @@ export default function RequestPage() {
             <FlatList
                 data={filtered}
                 keyExtractor={r => r.id}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+                onScroll={webPull.onScroll}
+                onTouchStart={webPull.onTouchStart}
+                onTouchMove={webPull.onTouchMove}
+                onTouchEnd={webPull.onTouchEnd}
+                scrollEventThrottle={16}
                 contentContainerStyle={{ paddingTop: 0, paddingBottom: 76, gap: 12 }}
                 ListHeaderComponent={
                     <>
+                        <WebPullToRefreshBanner
+                            enabled={webPull.enabled}
+                            pullDistance={webPull.pullDistance}
+                            ready={webPull.ready}
+                            refreshing={refreshing}
+                        />
                         <View style={styles.header}>
                             <View style={styles.headerSpacer} />
                             <Text style={styles.pageTitle}>Request</Text>
@@ -768,4 +801,3 @@ export default function RequestPage() {
         </View>
     );
 }
-

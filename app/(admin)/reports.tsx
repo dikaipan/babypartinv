@@ -4,7 +4,9 @@ import { Text, Chip, Searchbar, Button, SegmentedButtons } from 'react-native-pa
 import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
+import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
+import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 import { Profile, EngineerStock, InventoryPart } from '../../src/types';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { normalizeArea } from '../../src/utils/normalizeArea';
@@ -218,6 +220,7 @@ export default function ReportsPage() {
     const [filterArea, setFilterArea] = useState('Semua Area');
     const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
     const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+    const [error, setError] = useState('');
 
     // Monitor data
     const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -233,29 +236,51 @@ export default function ReportsPage() {
     const isWide = width >= 768;
 
     const load = useCallback(async () => {
-        const [profilesRes, stockRes, partsRes, adjRes, delRes, openReqRes, usageRes] = await Promise.all([
-            supabase.from('profiles').select('*').eq('role', 'engineer'),
-            supabase.from('engineer_stock').select('*'),
-            supabase.from('inventory').select('*'),
-            supabase.from('stock_adjustments').select('*').order('timestamp', { ascending: false }).limit(50),
-            supabase.from('monthly_requests').select('*, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)').in('status', ['delivered', 'completed']).order('delivered_at', { ascending: false }).limit(50),
-            supabase.from('monthly_requests').select('id, status, submitted_at, reviewed_at, delivered_at, confirmed_at').in('status', [...REQUEST_OPEN_STATUSES]),
-            supabase.from('usage_reports').select('date, items'),
-        ]);
-        setProfiles(profilesRes.data || []);
-        setEngineerStocks(stockRes.data || []);
-        setParts(partsRes.data || []);
-        setAdjustments(adjRes.data || []);
-        setDeliveries(delRes.data || []);
-        setMonitorRequests((openReqRes.data || []) as MonitorRequestRow[]);
-        setUsageReports((usageRes.data || []) as UsageReportRow[]);
-        setLastUpdatedAt(new Date().toISOString());
+        try {
+            const [profilesRes, stockRes, partsRes, adjRes, delRes, openReqRes, usageRes] = await Promise.all([
+                supabase.from('profiles').select('*').eq('role', 'engineer'),
+                supabase.from('engineer_stock').select('*'),
+                supabase.from('inventory').select('*'),
+                supabase.from('stock_adjustments').select('*').order('timestamp', { ascending: false }).limit(50),
+                supabase.from('monthly_requests').select('*, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)').in('status', ['delivered', 'completed']).order('delivered_at', { ascending: false }).limit(50),
+                supabase.from('monthly_requests').select('id, status, submitted_at, reviewed_at, delivered_at, confirmed_at').in('status', [...REQUEST_OPEN_STATUSES]),
+                supabase.from('usage_reports').select('date, items'),
+            ]);
+
+            const firstError = [
+                profilesRes.error,
+                stockRes.error,
+                partsRes.error,
+                adjRes.error,
+                delRes.error,
+                openReqRes.error,
+                usageRes.error,
+            ].find(Boolean);
+
+            if (firstError) {
+                throw firstError;
+            }
+
+            setProfiles(profilesRes.data || []);
+            setEngineerStocks(stockRes.data || []);
+            setParts(partsRes.data || []);
+            setAdjustments(adjRes.data || []);
+            setDeliveries(delRes.data || []);
+            setMonitorRequests((openReqRes.data || []) as MonitorRequestRow[]);
+            setUsageReports((usageRes.data || []) as UsageReportRow[]);
+            setLastUpdatedAt(new Date().toISOString());
+            setError('');
+        } catch (error) {
+            console.error('Failed to load reports data:', error);
+            setError((error as any)?.message || 'Gagal memuat data reports.');
+        }
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
         load();
     }, [load]);
+    useWebAutoRefresh(load);
 
     const onRefresh = async () => {
         setRefreshing(true);
@@ -715,12 +740,13 @@ export default function ReportsPage() {
     };
 
     return (
-        <ScrollView
-            style={styles.container}
-            indicatorStyle="black"
-            contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-        >
+        <>
+            <ScrollView
+                style={styles.container}
+                indicatorStyle="black"
+                contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 20 }}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
+            >
             <View style={styles.header}>
                 <View>
                     <Text style={styles.title}>Reports</Text>
@@ -1120,7 +1146,11 @@ export default function ReportsPage() {
                     )}
                 </View>
             )}
-        </ScrollView>
+            </ScrollView>
+            <AppSnackbar visible={!!error} onDismiss={() => setError('')} duration={3200} style={{ backgroundColor: Colors.danger }}>
+                {error}
+            </AppSnackbar>
+        </>
     );
 }
 

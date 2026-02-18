@@ -98,7 +98,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     signUp: async (email, password, name, employeeId, location) => {
         set({ loading: true });
         try {
-            const { data, error } = await supabase.auth.signUp({ email, password });
+            const callbackBaseUrl = Platform.OS === 'web' ? window.location.origin : 'https://babypartinv.pages.dev';
+            const { data, error } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    emailRedirectTo: `${callbackBaseUrl}/confirm.html`,
+                },
+            });
             if (error) throw error;
             if (data.user) {
                 await supabase.from('profiles').upsert({
@@ -121,7 +128,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     resetPassword: async (email) => {
         set({ loading: true });
         try {
-            const baseUrl = Platform.OS === 'web' ? window.location.origin : 'https://babypartreset.pages.dev';
+            const baseUrl = Platform.OS === 'web' ? window.location.origin : 'https://babypartinv.pages.dev';
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
                 redirectTo: `${baseUrl}/reset-password.html`,
             });

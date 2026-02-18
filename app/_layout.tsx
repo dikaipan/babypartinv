@@ -6,18 +6,25 @@ import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { theme, Colors } from '../src/config/theme';
 import { useAuthStore } from '../src/stores/authStore';
+import { initOneSignal } from '../src/config/onesignal';
 
-import { initOneSignal } from '../src/config/onesignal'; // Import initOneSignal
+import { useFonts } from 'expo-font';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function RootLayout() {
     const { user, initialized, init, isRecovery } = useAuthStore();
     const segments = useSegments();
     const router = useRouter();
 
+    const [fontsLoaded] = useFonts({
+        ...MaterialCommunityIcons.font,
+    });
+
     useEffect(() => {
         init();
         initOneSignal(); // Initialize OneSignal
     }, []);
+
 
     useEffect(() => {
         if (!initialized) return;
@@ -62,10 +69,6 @@ export default function RootLayout() {
         const styleEl = doc.createElement('style');
         styleEl.id = styleId;
         styleEl.textContent = `
-            @font-face {
-                font-family: 'MaterialCommunityIcons';
-                src: url(${require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf')}) format('truetype');
-            }
             * {
                 scrollbar-width: thin;
                 scrollbar-color: #2B3A4E #0B1320;
@@ -94,7 +97,7 @@ export default function RootLayout() {
         };
     }, [isWeb, isAdmin]);
 
-    if (!initialized) {
+    if (!initialized || !fontsLoaded) {
         return (
             <GestureHandlerRootView style={styles.flex}>
                 <PaperProvider theme={theme}>

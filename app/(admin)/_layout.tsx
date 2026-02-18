@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, StyleSheet, Pressable, ScrollView, useWindowDimensions, Platform } from 'react-native';
+import { View, StyleSheet, Pressable, ScrollView, useWindowDimensions, Platform, Image } from 'react-native';
 import { Text } from 'react-native-paper';
 import { Slot, useRouter, usePathname } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -42,7 +42,7 @@ export default function AdminLayout() {
                 <View style={[styles.sidebar, !isWide && styles.sidebarOverlay]}>
                     <View style={styles.brand}>
                         <View style={styles.brandIcon}>
-                            <MaterialCommunityIcons name="package-variant-closed" size={26} color={Colors.bg} />
+                            <Image source={require('../../assets/logo.png')} style={styles.brandIconImage} resizeMode="contain" />
                         </View>
                         <View>
                             <Text style={styles.brandTitle}>BabyPart</Text>
@@ -110,9 +110,10 @@ const styles = StyleSheet.create({
     brand: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 20, marginBottom: 10 },
     brandIcon: {
         width: 44, height: 44, borderRadius: 12, backgroundColor: Colors.primary,
-        justifyContent: 'center', alignItems: 'center',
+        justifyContent: 'center', alignItems: 'center', overflow: 'hidden',
         shadowColor: Colors.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
     },
+    brandIconImage: { width: '100%', height: '100%' },
     brandTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: 0.5 },
     brandSub: { fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
     menu: { flex: 1, paddingHorizontal: 12 },

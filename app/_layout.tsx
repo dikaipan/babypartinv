@@ -14,7 +14,7 @@ import { getQueryClient } from '../src/config/queryClient';
 
 
 export default function RootLayout() {
-    const { user, initialized, init, isRecovery } = useAuthStore();
+    const { user, session, initialized, init, isRecovery } = useAuthStore();
     const segments = useSegments();
     const router = useRouter();
     const queryClient = getQueryClient();
@@ -38,7 +38,8 @@ export default function RootLayout() {
         }
 
         const inAuth = segments[0] === '(auth)';
-        if (!user && !inAuth) {
+        // Keep user on protected routes while session is present but profile is still syncing.
+        if (!user && !session && !inAuth) {
             router.replace('/(auth)/login');
         } else if (user && inAuth) {
             if (user.role === 'admin') {
@@ -47,7 +48,7 @@ export default function RootLayout() {
                 router.replace('/(engineer)/stok');
             }
         }
-    }, [user, initialized, segments, isRecovery]);
+    }, [user, session, initialized, segments, isRecovery]);
 
     const isWeb = Platform.OS === 'web';
     const isAdmin = segments[0] === '(admin)';

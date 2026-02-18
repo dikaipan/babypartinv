@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../config/supabase';
 
 type UseSupabaseRealtimeRefreshOptions = {
@@ -14,6 +14,12 @@ export function useSupabaseRealtimeRefresh(
 ) {
     const { enabled = true, debounceMs = 350, schema = 'public' } = options;
     const tablesKey = useMemo(() => tables.slice().sort().join('|'), [tables]);
+    const refreshRef = useRef(refresh);
+    const instanceIdRef = useRef(Math.random().toString(36).slice(2, 8));
+
+    useEffect(() => {
+        refreshRef.current = refresh;
+    }, [refresh]);
 
     useEffect(() => {
         if (!enabled || tables.length === 0) return;
@@ -21,7 +27,7 @@ export function useSupabaseRealtimeRefresh(
         let disposed = false;
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
         const tableList = tables.slice();
-        const channelName = `rt-refresh:${schema}:${tablesKey}:${Math.random().toString(36).slice(2, 8)}`;
+        const channelName = `rt-refresh:${schema}:${tablesKey}:${instanceIdRef.current}`;
 
         const triggerRefresh = () => {
             if (disposed) return;
@@ -29,7 +35,7 @@ export function useSupabaseRealtimeRefresh(
             timeoutId = setTimeout(() => {
                 timeoutId = null;
                 if (!disposed) {
-                    void refresh();
+                    void refreshRef.current();
                 }
             }, debounceMs);
         };
@@ -50,6 +56,5 @@ export function useSupabaseRealtimeRefresh(
             if (timeoutId) clearTimeout(timeoutId);
             void supabase.removeChannel(channel);
         };
-    }, [debounceMs, enabled, refresh, schema, tables.length, tablesKey]);
+    }, [debounceMs, enabled, schema, tables.length, tablesKey]);
 }
-

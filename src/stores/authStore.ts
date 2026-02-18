@@ -233,6 +233,10 @@ export const useAuthStore = create<AuthState>((set, get) => {
             }
 
             if (!session?.user) {
+                // Ignore transient null-session events that can happen on some web runtimes.
+                if (event !== 'SIGNED_OUT') {
+                    return;
+                }
                 set({ session: null, user: null });
                 return;
             }

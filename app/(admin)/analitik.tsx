@@ -413,6 +413,18 @@ export default function AnalitikPage() {
         const picked = dailyPartChart.series.find(part => part.part_id === chartPartFilter);
         return picked ? [picked] : topChartParts;
     }, [chartPartFilter, dailyPartChart, topChartParts]);
+    const chartWidth = useMemo(() => Math.max(300, effectiveWidth - 64), [effectiveWidth]);
+    const chartConfig = useMemo(() => ({
+        backgroundColor: Colors.card,
+        backgroundGradientFrom: Colors.card,
+        backgroundGradientTo: Colors.card,
+        decimalPlaces: 0,
+        color: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
+        labelColor: (opacity = 1) => Colors.textSecondary,
+        useShadowColorFromDataset: true,
+        style: { borderRadius: 16 },
+        propsForDots: { r: '4', strokeWidth: '1', stroke: Colors.card },
+    }), []);
 
     useEffect(() => {
         if (chartPartFilter === CHART_FILTER_ALL) return;
@@ -742,20 +754,10 @@ export default function AnalitikPage() {
 
                         <LineChart
                             data={chartData}
-                            width={effectiveWidth - 64}
+                            width={chartWidth}
                             height={220}
                             withDots
-                            chartConfig={{
-                                backgroundColor: Colors.card,
-                                backgroundGradientFrom: Colors.card,
-                                backgroundGradientTo: Colors.card,
-                                decimalPlaces: 0,
-                                color: (opacity = 1) => `rgba(37, 99, 235, ${opacity})`,
-                                labelColor: (opacity = 1) => Colors.textSecondary,
-                                useShadowColorFromDataset: true,
-                                style: { borderRadius: 16 },
-                                propsForDots: { r: '4', strokeWidth: '1', stroke: Colors.card }
-                            }}
+                            chartConfig={chartConfig}
                             bezier
                             style={{ marginVertical: 8, borderRadius: 16 }}
                         />
@@ -778,7 +780,7 @@ export default function AnalitikPage() {
             </View>
 
             <View style={[styles.rankingGrid, { marginTop: 24 }, !isWide && styles.rankingGridStack]}>
-                <View style={[styles.rankingSection, isWide && styles.rankingSectionHalf]}>
+                <View style={[styles.rankingSection, isWide ? styles.rankingSectionHalf : styles.rankingSectionStack]}>
                     <View style={styles.rankingHeader}>
                         <Text style={styles.sectionTitle}>Top Engineer Rajin Bulanan</Text>
                         <Text style={styles.sectionHint}>Berdasarkan total pemakaian baby part ({currentMonthLabel})</Text>
@@ -819,7 +821,7 @@ export default function AnalitikPage() {
                     </View>
                 </View>
 
-                <View style={[styles.rankingSection, isWide && styles.rankingSectionHalf]}>
+                <View style={[styles.rankingSection, isWide ? styles.rankingSectionHalf : styles.rankingSectionStack]}>
                     <View style={styles.rankingHeader}>
                         <Text style={styles.sectionTitle}>Top Parts by Usage</Text>
                         <Text style={styles.sectionHint}>Akumulasi total pemakaian baby part</Text>
@@ -892,8 +894,9 @@ const styles = StyleSheet.create({
 
     rankingGrid: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
     rankingGridStack: { flexDirection: 'column' },
-    rankingSection: { flex: 1 },
-    rankingSectionHalf: { width: '50%' },
+    rankingSection: { minWidth: 0 },
+    rankingSectionHalf: { flex: 1, width: '49%' },
+    rankingSectionStack: { width: '100%', flexGrow: 0, flexShrink: 0 },
     rankingHeader: { minHeight: 56, marginBottom: 12 },
 
     statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' },

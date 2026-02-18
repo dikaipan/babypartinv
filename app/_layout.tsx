@@ -62,6 +62,10 @@ export default function RootLayout() {
         const styleEl = doc.createElement('style');
         styleEl.id = styleId;
         styleEl.textContent = `
+            @font-face {
+                font-family: 'MaterialCommunityIcons';
+                src: url(${require('@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialCommunityIcons.ttf')}) format('truetype');
+            }
             * {
                 scrollbar-width: thin;
                 scrollbar-color: #2B3A4E #0B1320;

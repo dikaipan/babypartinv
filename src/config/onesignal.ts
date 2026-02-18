@@ -39,6 +39,8 @@ type SyncPushIdentityResult = {
 let oneSignalWebInitPromise: Promise<OneSignalWebSdk> | null = null;
 let oneSignalWebInitialized = false;
 let oneSignalWebUnsupportedReason: string | null = null;
+let oneSignalNativeInitialized = false;
+let oneSignalNativeListenersAttached = false;
 const ONE_SIGNAL_WEB_INIT_FLAG = '__babypartOneSignalWebInitialized';
 
 const toErrorMessage = (error: unknown) =>
@@ -60,6 +62,14 @@ const isWebPushNotConfiguredError = (error: unknown) => {
 
 const getWebPushSubscription = (sdk: OneSignalWebSdk): OneSignalWebPushSubscription | undefined =>
     sdk.User?.PushSubscription || sdk.User?.pushSubscription;
+
+const getNativeOneSignalLogLevel = (): LogLevel => {
+    const levels = LogLevel as unknown as Record<string, LogLevel | undefined>;
+    if (__DEV__) {
+        return levels.Warn ?? LogLevel.Verbose;
+    }
+    return levels.None ?? levels.Error ?? levels.Warn ?? LogLevel.Verbose;
+};
 
 const getWebPushUnsupportedReason = (): string | null => {
     if (oneSignalWebUnsupportedReason) return oneSignalWebUnsupportedReason;
@@ -154,27 +164,34 @@ export const initOneSignal = () => {
         return;
     }
 
-    // Optional - set logging for debugging
-    OneSignal.Debug.setLogLevel(LogLevel.Verbose);
-    // ... rest of native init
+    if (oneSignalNativeInitialized) return;
 
-    // OneSignal Initialization
-    OneSignal.initialize(ONESIGNAL_APP_ID);
+    try {
+        OneSignal.Debug.setLogLevel(getNativeOneSignalLogLevel());
+        OneSignal.initialize(ONESIGNAL_APP_ID);
+        oneSignalNativeInitialized = true;
+    } catch (error) {
+        oneSignalNativeInitialized = false;
+        console.warn('[OneSignal.native] Init failed:', error);
+        return;
+    }
 
-    // Request permission for notifications if not already granted
-    OneSignal.Notifications.requestPermission(true);
-    OneSignal.User.pushSubscription.optIn();
+    if (!oneSignalNativeListenersAttached) {
+        oneSignalNativeListenersAttached = true;
 
-    // Listen for notification clicks
-    OneSignal.Notifications.addEventListener('click', (event: any) => {
-        console.log('OneSignal: notification clicked:', event);
-    });
+        OneSignal.Notifications.addEventListener('click', (event: any) => {
+            if (__DEV__) {
+                console.log('OneSignal: notification clicked:', event);
+            }
+        });
 
-    // Listen for foreground notifications
-    OneSignal.Notifications.addEventListener('foregroundWillDisplay', (event: any) => {
-        console.log('OneSignal: notification received in foreground:', event);
-        // By default, notifications are shown. You can prevent this with event.preventDefault()
-    });
+        OneSignal.Notifications.addEventListener('foregroundWillDisplay', (event: any) => {
+            if (__DEV__) {
+                console.log('OneSignal: notification received in foreground:', event);
+            }
+            // By default, notifications are shown. You can prevent this with event.preventDefault()
+        });
+    }
 };
 
 export async function syncPushIdentity(
@@ -248,6 +265,10 @@ export async function syncPushIdentity(
         }
     }
 
+    if (!oneSignalNativeInitialized) {
+        initOneSignal();
+    }
+
     OneSignal.login(externalUserId);
     let permissionGranted = await OneSignal.Notifications.getPermissionAsync();
     if (!permissionGranted && shouldRequestPermission) {
@@ -292,36 +313,39 @@ export const logoutPushIdentity = async () => {
 };
 
 /* ─── Client-side Notification Sending (Not recommended for public apps, okay for internal admin) ─── */
-const normalizePushGatewayUrl = (rawUrl: string): string => {
+const buildPushGatewayUrls = (rawUrl: string): string[] => {
     const trimmed = rawUrl.trim();
-    if (!trimmed) return '';
+    if (!trimmed) return [];
+
+    const urls: string[] = [];
+    const pushUnique = (value: string) => {
+        const normalized = value.replace(/\/+$/, '');
+        if (!normalized) return;
+        if (!urls.includes(normalized)) {
+            urls.push(normalized);
+        }
+    };
 
     try {
         const parsed = new URL(trimmed);
         const plainSupabaseHost = parsed.hostname.match(/^([a-z0-9-]+)\.supabase\.co$/i);
         const functionSupabaseHost = parsed.hostname.match(/^([a-z0-9-]+)\.functions\.supabase\.co$/i);
-        const normalizedPath = (parsed.pathname.replace(/\/+$/, '') || '/');
+        const projectRef = plainSupabaseHost?.[1] || functionSupabaseHost?.[1];
 
-        if (functionSupabaseHost && normalizedPath === '/push-gateway') {
-            parsed.hostname = `${functionSupabaseHost[1]}.supabase.co`;
-            parsed.pathname = '/functions/v1/push-gateway';
-            parsed.search = '';
-            return parsed.toString().replace(/\/$/, '');
-        }
-
-        if (plainSupabaseHost && normalizedPath === '/push-gateway') {
-            parsed.pathname = '/functions/v1/push-gateway';
-            parsed.search = '';
-            return parsed.toString().replace(/\/$/, '');
+        if (projectRef) {
+            pushUnique(`https://${projectRef}.supabase.co/functions/v1/push-gateway`);
+            pushUnique(`https://${projectRef}.functions.supabase.co/push-gateway`);
+            return urls;
         }
     } catch {
-        // Keep original value for existing validation path.
+        // Use raw string below.
     }
 
-    return trimmed;
+    pushUnique(trimmed);
+    return urls;
 };
 
-const PUSH_GATEWAY_URL = normalizePushGatewayUrl(process.env.EXPO_PUBLIC_PUSH_GATEWAY_URL || '');
+const PUSH_GATEWAY_URLS = buildPushGatewayUrls(process.env.EXPO_PUBLIC_PUSH_GATEWAY_URL || '');
 
 interface NotificationPayload {
     title: string;
@@ -349,7 +373,7 @@ export const sendNotification = async (
     target: { externalIds?: string[]; playerIds?: string[]; segments?: string[] },
     data?: unknown
 ) => {
-    if (!PUSH_GATEWAY_URL) {
+    if (PUSH_GATEWAY_URLS.length === 0) {
         throw new Error('Push gateway belum dikonfigurasi. Set EXPO_PUBLIC_PUSH_GATEWAY_URL terlebih dulu.');
     }
 
@@ -377,29 +401,50 @@ export const sendNotification = async (
         headers.Authorization = `Bearer ${session.access_token}`;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    let lastError: Error | null = null;
 
     try {
-        const response = await fetch(PUSH_GATEWAY_URL, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            signal: controller.signal,
-        });
+        for (let i = 0; i < PUSH_GATEWAY_URLS.length; i += 1) {
+            const endpoint = PUSH_GATEWAY_URLS[i];
+            const hasFallback = i < PUSH_GATEWAY_URLS.length - 1;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-        const text = await response.text();
-        const json = parseJsonSafe(text);
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload),
+                    signal: controller.signal,
+                });
 
-        if (!response.ok) {
-            throw new Error(`[PushGateway ${response.status}] ${JSON.stringify(json)}`);
+                const text = await response.text();
+                const json = parseJsonSafe(text);
+
+                if (!response.ok) {
+                    const code = typeof (json as any)?.code === 'string'
+                        ? String((json as any).code).toUpperCase()
+                        : '';
+                    const error = new Error(`[PushGateway ${response.status}] ${JSON.stringify(json)}`);
+                    const notFound = response.status === 404 || code === 'NOT_FOUND';
+
+                    if (notFound && hasFallback) {
+                        lastError = error;
+                        continue;
+                    }
+
+                    throw error;
+                }
+
+                return json;
+            } finally {
+                clearTimeout(timeoutId);
+            }
         }
 
-        return json;
+        throw lastError || new Error(`Push gateway tidak ditemukan di endpoint yang tersedia: ${PUSH_GATEWAY_URLS.join(', ')}`);
     } catch (error) {
         console.error('Push gateway error:', error);
         throw error;
-    } finally {
-        clearTimeout(timeoutId);
     }
 };

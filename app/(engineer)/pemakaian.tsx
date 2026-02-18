@@ -43,7 +43,11 @@ const fetchEngineerUsageReports = async (engineerId: string): Promise<UsageRepor
 
 const fetchEngineerUsageStocks = async (engineerId: string): Promise<StockWithName[]> => {
     const [stockRes, partsRes] = await Promise.all([
-        supabase.from('engineer_stock').select('*').eq('engineer_id', engineerId).gt('quantity', 0),
+        supabase
+            .from('engineer_stock')
+            .select('engineer_id, part_id, quantity, min_stock, last_sync, created_at, updated_at')
+            .eq('engineer_id', engineerId)
+            .gt('quantity', 0),
         supabase.from('inventory').select('id, part_name'),
     ]);
 

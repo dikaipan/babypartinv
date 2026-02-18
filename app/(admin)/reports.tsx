@@ -60,6 +60,8 @@ const REQUEST_OPEN_STATUSES = ['pending', 'approved', 'delivered'] as const;
 const REQUEST_SLA_RISK_HOURS = 48;
 const REQUEST_OVERDUE_HOURS = 72;
 const RISK_STOCKOUT_THRESHOLD_DAYS = 14;
+const MONITOR_USAGE_FETCH_DAYS = 45;
+const MONITOR_OPEN_REQUEST_FETCH_DAYS = 21;
 
 const monitorWindowToDays = (window: MonitorWindow): number => {
     if (window === '24h') return 1;
@@ -149,14 +151,34 @@ type ReportsData = {
 };
 
 const fetchReportsData = async (): Promise<ReportsData> => {
+    const now = Date.now();
+    const usageCutoffIso = new Date(now - (MONITOR_USAGE_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+    const openRequestCutoffIso = new Date(now - (MONITOR_OPEN_REQUEST_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+
     const [profilesRes, stockRes, partsRes, adjRes, delRes, openReqRes, usageRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('role', 'engineer'),
-        supabase.from('engineer_stock').select('*'),
-        supabase.from('inventory').select('*'),
-        supabase.from('stock_adjustments').select('*').order('timestamp', { ascending: false }).limit(50),
-        supabase.from('monthly_requests').select('*, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)').in('status', ['delivered', 'completed']).order('delivered_at', { ascending: false }).limit(50),
-        supabase.from('monthly_requests').select('id, status, submitted_at, reviewed_at, delivered_at, confirmed_at').in('status', [...REQUEST_OPEN_STATUSES]),
-        supabase.from('usage_reports').select('date, items'),
+        supabase.from('profiles').select('id, name, email, role, is_active, employee_id, location').eq('role', 'engineer'),
+        supabase.from('engineer_stock').select('engineer_id, part_id, quantity'),
+        supabase.from('inventory').select('id, part_name, total_stock, min_stock'),
+        supabase
+            .from('stock_adjustments')
+            .select('id, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp, engineer_name')
+            .order('timestamp', { ascending: false })
+            .limit(50),
+        supabase
+            .from('monthly_requests')
+            .select('id, submitted_at, delivered_at, confirmed_at, items, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)')
+            .in('status', ['delivered', 'completed'])
+            .order('delivered_at', { ascending: false })
+            .limit(50),
+        supabase
+            .from('monthly_requests')
+            .select('id, status, submitted_at, reviewed_at, delivered_at, confirmed_at')
+            .in('status', [...REQUEST_OPEN_STATUSES])
+            .gte('submitted_at', openRequestCutoffIso),
+        supabase
+            .from('usage_reports')
+            .select('date, items')
+            .gte('date', usageCutoffIso),
     ]);
 
     const firstError = [
@@ -250,7 +272,8 @@ const ddStyles = StyleSheet.create({
 interface EngineerWithStock {
     profile: Profile;
     stocks: { part_id: string; part_name: string; quantity: number }[];
-    missingParts: { part_id: string; part_name: string }[];
+    ownedPartIds: Set<string>;
+    missingCount: number;
     totalQty: number;
 }
 
@@ -315,6 +338,11 @@ export default function ReportsPage() {
         for (const p of parts) map[p.id] = p.part_name;
         return map;
     }, [parts]);
+    const catalogParts = useMemo(
+        () => [...parts].sort((a, b) => a.id.localeCompare(b.id)),
+        [parts],
+    );
+    const catalogPartCount = catalogParts.length;
 
     // Build area groups
     const areaGroups: AreaGroupData[] = useMemo(() => {
@@ -340,18 +368,26 @@ export default function ReportsPage() {
                     .map(s => ({ part_id: s.part_id, part_name: partNameMap[s.part_id] || s.part_id, quantity: s.quantity }))
                     .sort((a, b) => a.part_id.localeCompare(b.part_id));
                 const ownedPartIds = new Set(stocks.map(s => s.part_id));
-                const missingParts = parts
-                    .filter(p => !ownedPartIds.has(p.id))
-                    .map(p => ({ part_id: p.id, part_name: p.part_name }))
-                    .sort((a, b) => a.part_id.localeCompare(b.part_id));
-                return { profile: p, stocks, missingParts, totalQty: stocks.reduce((sum, s) => sum + s.quantity, 0) };
+                return {
+                    profile: p,
+                    stocks,
+                    ownedPartIds,
+                    missingCount: Math.max(0, catalogPartCount - ownedPartIds.size),
+                    totalQty: stocks.reduce((sum, s) => sum + s.quantity, 0),
+                };
             }).sort((a, b) => a.profile.name.localeCompare(b.profile.name));
 
             const totalParts = engineers.reduce((s, e) => s + e.stocks.length, 0);
             const totalQty = engineers.reduce((s, e) => s + e.totalQty, 0);
             return { area, engineers, totalParts, totalQty, engineerCount: engineers.length };
         }).sort((a, b) => a.area.localeCompare(b.area));
-    }, [profiles, engineerStocks, partNameMap]);
+    }, [profiles, engineerStocks, partNameMap, catalogPartCount]);
+
+    const getMissingParts = useCallback((engineer: EngineerWithStock) => (
+        catalogParts
+            .filter((part) => !engineer.ownedPartIds.has(part.id))
+            .map((part) => ({ part_id: part.id, part_name: part.part_name }))
+    ), [catalogParts]);
 
     const allAreas = useMemo(() => ['Semua Area', ...areaGroups.map(g => g.area)], [areaGroups]);
 
@@ -460,13 +496,24 @@ export default function ReportsPage() {
         ? '-'
         : `${averageLeadTimeHours.toFixed(1)} jam`;
 
+    const usageRowsInWindow = useMemo(
+        () => usageReports
+            .map((row) => {
+                const reportMs = safeDateMs(row.date);
+                if (reportMs === null || reportMs < monitorCutoffMs) return null;
+                return {
+                    reportMs,
+                    items: parseUsageItems(row.items),
+                };
+            })
+            .filter((row): row is { reportMs: number; items: { partId: string; partName: string; quantity: number }[] } => !!row),
+        [usageReports, monitorCutoffMs],
+    );
+
     const partUsageByWindow = useMemo(() => {
         const usageMap = new Map<string, { total: number; part_name: string }>();
-        for (const row of usageReports) {
-            const reportMs = safeDateMs(row.date);
-            if (reportMs === null || reportMs < monitorCutoffMs) continue;
-
-            for (const item of parseUsageItems(row.items)) {
+        for (const row of usageRowsInWindow) {
+            for (const item of row.items) {
                 const existing = usageMap.get(item.partId) || {
                     total: 0,
                     part_name: partNameMap[item.partId] || item.partName || item.partId,
@@ -476,7 +523,7 @@ export default function ReportsPage() {
             }
         }
         return usageMap;
-    }, [usageReports, monitorCutoffMs, partNameMap]);
+    }, [usageRowsInWindow, partNameMap]);
 
     const riskParts = useMemo<RiskPartRow[]>(() => {
         const rows: RiskPartRow[] = [];
@@ -518,12 +565,9 @@ export default function ReportsPage() {
         const todayKey = formatDayKey(Date.now());
         const dayTotalsByPart = new Map<string, Map<string, number>>();
 
-        for (const report of usageReports) {
-            const reportMs = safeDateMs(report.date);
-            if (reportMs === null || reportMs < monitorCutoffMs) continue;
-            const dayKey = formatDayKey(reportMs);
-
-            for (const item of parseUsageItems(report.items)) {
+        for (const report of usageRowsInWindow) {
+            const dayKey = formatDayKey(report.reportMs);
+            for (const item of report.items) {
                 if (!dayTotalsByPart.has(item.partId)) dayTotalsByPart.set(item.partId, new Map<string, number>());
                 const dayMap = dayTotalsByPart.get(item.partId)!;
                 dayMap.set(dayKey, (dayMap.get(dayKey) || 0) + item.quantity);
@@ -549,7 +593,7 @@ export default function ReportsPage() {
         }
 
         return spikes.sort((a, b) => b.ratio - a.ratio).slice(0, 2);
-    }, [usageReports, monitorCutoffMs]);
+    }, [usageRowsInWindow]);
 
     const monitorAlerts = useMemo<MonitorAlert[]>(() => {
         const alerts: MonitorAlert[] = [];
@@ -1019,8 +1063,10 @@ export default function ReportsPage() {
                                     {/* Expanded Engineer List */}
                                     {isExpanded && (
                                         <View style={styles.engineerList}>
-                                            {group.engineers.map(eng => (
-                                                <View key={eng.profile.id} style={styles.engineerRow}>
+                                            {group.engineers.map(eng => {
+                                                const missingParts = getMissingParts(eng);
+                                                return (
+                                                    <View key={eng.profile.id} style={styles.engineerRow}>
                                                     <View style={styles.engineerHeader}>
                                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
                                                             <View style={[styles.engAvatar, eng.totalQty === 0 && { backgroundColor: Colors.danger + '20', borderColor: Colors.danger + '40' }]}>
@@ -1036,7 +1082,7 @@ export default function ReportsPage() {
                                                         </View>
                                                         <View style={[styles.engQtyBadge, eng.totalQty === 0 && { backgroundColor: Colors.danger + '15', borderColor: Colors.danger + '40' }]}>
                                                             <Text style={[styles.engQtyText, eng.totalQty === 0 && { color: Colors.danger }]}>
-                                                                {eng.totalQty === 0 ? 'Kosong' : `${eng.stocks.length}/${eng.stocks.length + eng.missingParts.length} Part`}
+                                                                {eng.totalQty === 0 ? 'Kosong' : `${eng.stocks.length}/${eng.stocks.length + eng.missingCount} Part`}
                                                             </Text>
                                                         </View>
                                                     </View>
@@ -1062,14 +1108,14 @@ export default function ReportsPage() {
                                                     )}
 
                                                     {/* Tidak Dimiliki */}
-                                                    {eng.missingParts.length > 0 && (
+                                                    {missingParts.length > 0 && (
                                                         <View style={{ gap: 6 }}>
                                                             <View style={styles.stockSectionLabel}>
                                                                 <MaterialCommunityIcons name="close-circle" size={14} color={Colors.danger} />
-                                                                <Text style={[styles.stockSectionLabelText, { color: Colors.danger }]}>Tidak Dimiliki ({eng.missingParts.length})</Text>
+                                                                <Text style={[styles.stockSectionLabelText, { color: Colors.danger }]}>Tidak Dimiliki ({missingParts.length})</Text>
                                                             </View>
                                                             <View style={styles.stockChipsRow}>
-                                                                {eng.missingParts.map((s, idx) => (
+                                                                {missingParts.map((s, idx) => (
                                                                     <View key={idx} style={[styles.stockChip, { borderColor: Colors.danger + '30', backgroundColor: Colors.danger + '08' }]}>
                                                                         <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.danger + 'CC' }}>{s.part_id}</Text>
                                                                     </View>
@@ -1077,8 +1123,9 @@ export default function ReportsPage() {
                                                             </View>
                                                         </View>
                                                     )}
-                                                </View>
-                                            ))}
+                                                    </View>
+                                                );
+                                            })}
                                         </View>
                                     )}
                                 </View>

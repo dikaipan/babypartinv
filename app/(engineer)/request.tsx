@@ -104,7 +104,10 @@ const fetchEngineerRequestStats = async (engineerId: string): Promise<RequestSta
 };
 
 const fetchInventoryParts = async (): Promise<InventoryPart[]> => {
-    const { data, error } = await supabase.from('inventory').select('*').order('part_name');
+    const { data, error } = await supabase
+        .from('inventory')
+        .select('id, part_name, total_stock, min_stock')
+        .order('part_name');
     if (error) throw error;
     return data || [];
 };

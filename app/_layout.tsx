@@ -2,29 +2,33 @@ import { useEffect } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import { PaperProvider } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
-import { View, ActivityIndicator, StyleSheet, Platform, LogBox, ScrollView, FlatList, SectionList, VirtualizedList, useWindowDimensions } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform, LogBox, ScrollView, FlatList, SectionList, VirtualizedList, useWindowDimensions, InteractionManager } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { enableFreeze } from 'react-native-screens';
 import { theme, Colors } from '../src/config/theme';
 import { useAuthStore } from '../src/stores/authStore';
 import { initOneSignal } from '../src/config/onesignal';
 import { getQueryClient } from '../src/config/queryClient';
 
-const hideScrollIndicatorsByDefault = (Component: any) => {
+const applyAndroidScrollDefaults = (Component: any) => {
     Component.defaultProps = {
         ...(Component.defaultProps || {}),
         showsVerticalScrollIndicator: false,
         showsHorizontalScrollIndicator: false,
+        keyboardShouldPersistTaps: Component.defaultProps?.keyboardShouldPersistTaps ?? 'handled',
     };
 };
 
 if (Platform.OS === 'android') {
-    hideScrollIndicatorsByDefault(ScrollView);
-    hideScrollIndicatorsByDefault(FlatList);
-    hideScrollIndicatorsByDefault(SectionList);
-    hideScrollIndicatorsByDefault(VirtualizedList);
+    applyAndroidScrollDefaults(ScrollView);
+    applyAndroidScrollDefaults(FlatList);
+    applyAndroidScrollDefaults(SectionList);
+    applyAndroidScrollDefaults(VirtualizedList);
 }
+
+enableFreeze(true);
 
 
 
@@ -40,8 +44,24 @@ export default function RootLayout() {
     });
 
     useEffect(() => {
-        init();
-        initOneSignal(); // Initialize OneSignal
+        let cancelled = false;
+        let interactionTask: ReturnType<typeof InteractionManager.runAfterInteractions> | null = null;
+
+        void init();
+
+        const initTimer = setTimeout(() => {
+            if (cancelled) return;
+            interactionTask = InteractionManager.runAfterInteractions(() => {
+                if (cancelled) return;
+                initOneSignal();
+            });
+        }, 350);
+
+        return () => {
+            cancelled = true;
+            clearTimeout(initTimer);
+            interactionTask?.cancel?.();
+        };
     }, []);
 
 

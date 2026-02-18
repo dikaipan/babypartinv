@@ -30,8 +30,13 @@ type EngineerStockData = {
 
 const fetchEngineerStockData = async (engineerId: string): Promise<EngineerStockData> => {
     const [stockRes, partsRes] = await Promise.all([
-        supabase.from('engineer_stock').select('*').eq('engineer_id', engineerId),
-        supabase.from('inventory').select('*'),
+        supabase
+            .from('engineer_stock')
+            .select('engineer_id, part_id, quantity, min_stock, last_sync, created_at, updated_at')
+            .eq('engineer_id', engineerId),
+        supabase
+            .from('inventory')
+            .select('id, part_name, total_stock, min_stock'),
     ]);
 
     if (stockRes.error) throw stockRes.error;

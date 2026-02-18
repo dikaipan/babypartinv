@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { Platform } from 'react-native';
 import { supabase } from '../config/supabase';
 
 type UseSupabaseRealtimeRefreshOptions = {
@@ -7,12 +8,14 @@ type UseSupabaseRealtimeRefreshOptions = {
     schema?: string;
 };
 
+const DEFAULT_DEBOUNCE_MS = Platform.OS === 'android' ? 220 : 300;
+
 export function useSupabaseRealtimeRefresh(
     tables: string[],
     refresh: () => void | Promise<void>,
     options: UseSupabaseRealtimeRefreshOptions = {},
 ) {
-    const { enabled = true, debounceMs = 350, schema = 'public' } = options;
+    const { enabled = true, debounceMs = DEFAULT_DEBOUNCE_MS, schema = 'public' } = options;
     const tablesKey = useMemo(() => tables.slice().sort().join('|'), [tables]);
     const refreshRef = useRef(refresh);
     const instanceIdRef = useRef(Math.random().toString(36).slice(2, 8));
@@ -34,9 +37,8 @@ export function useSupabaseRealtimeRefresh(
             if (timeoutId) return;
             timeoutId = setTimeout(() => {
                 timeoutId = null;
-                if (!disposed) {
-                    void refreshRef.current();
-                }
+                if (disposed) return;
+                void refreshRef.current();
             }, debounceMs);
         };
 

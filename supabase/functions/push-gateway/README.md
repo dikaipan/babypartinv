@@ -15,8 +15,10 @@ Function ini menerima request push dari app (pakai bearer token Supabase), lalu 
 
 ## Deploy
 ```bash
-supabase functions deploy push-gateway
+supabase functions deploy push-gateway --no-verify-jwt
 ```
+
+`--no-verify-jwt` wajib untuk request dari browser karena preflight `OPTIONS` tidak membawa bearer token. Validasi token tetap aman karena function ini memverifikasi `Authorization` sendiri untuk request `POST`.
 
 ## URL endpoint
 ```text

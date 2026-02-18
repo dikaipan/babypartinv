@@ -16,7 +16,7 @@ import { useSupabaseRealtimeRefresh } from '../src/hooks/useSupabaseRealtimeRefr
 const fetchNotificationsByUser = async (userId: string): Promise<AppNotification[]> => {
     const { data, error } = await supabase
         .from('notifications')
-        .select('*')
+        .select('id, user_id, title, body, type, data, is_read, created_at')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(50);

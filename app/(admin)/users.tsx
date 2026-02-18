@@ -33,7 +33,10 @@ const mapProfileToForm = (profile: Profile): UserFormState => ({
 });
 
 const fetchUsers = async (): Promise<Profile[]> => {
-    const { data, error } = await supabase.from('profiles').select('*').order('name');
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('id, name, email, role, location, employee_id, is_active')
+        .order('name');
     if (error) throw error;
     return data || [];
 };

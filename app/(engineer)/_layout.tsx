@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Platform } from 'react-native';
 import { Colors } from '../../src/config/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -13,6 +14,8 @@ export default function EngineerLayout() {
             backBehavior="none"
             screenOptions={{
                 headerShown: false,
+                lazy: true,
+                freezeOnBlur: Platform.OS !== 'android',
                 tabBarStyle: {
                     backgroundColor: Colors.card,
                     borderTopColor: Colors.border,

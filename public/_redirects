@@ -2,6 +2,8 @@
 # Auth callback pages are served as-is (they are standalone HTML)
 /reset-password.html  /reset-password.html  200
 /confirm.html         /confirm.html         200
+/OneSignalSDKWorker.js /OneSignalSDKWorker.js 200
+/OneSignalSDKUpdaterWorker.js /OneSignalSDKUpdaterWorker.js 200
 /fonts/*              /fonts/:splat         200
 /assets/*             /assets/:splat        200
 /_expo/*              /_expo/:splat         200

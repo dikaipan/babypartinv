@@ -31,11 +31,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         try {
             const { data: { session } } = await supabase.auth.getSession();
             if (session?.user) {
-                const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('*')
-                    .eq('id', session.user.id)
-                    .single();
+                // Fetch profile in parallel with setting session
+                const [{ data: profile }] = await Promise.all([
+                    supabase.from('profiles').select('*').eq('id', session.user.id).single(),
+                ]);
                 set({ session, user: profile, initialized: true });
                 if (Platform.OS !== 'web') {
                     OneSignal.login(session.user.id);

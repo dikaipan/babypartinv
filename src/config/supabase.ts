@@ -29,6 +29,6 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         storage: Platform.OS === 'web' ? webStorage : nativeStorage,
         autoRefreshToken: true,
         persistSession: true,
-        detectSessionInUrl: false,
+        detectSessionInUrl: Platform.OS === 'web', // Must be true on web for password reset/email confirm links
     },
 });

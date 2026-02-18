@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, AppState } from 'react-native';
 import { Text, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '../../src/config/theme';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
@@ -47,7 +47,22 @@ export default function DashboardPage() {
         if (kpiRes.data) setKpi(Array.isArray(kpiRes.data) ? kpiRes.data[0] : kpiRes.data);
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    // Reload when screen comes into focus
+    useFocusEffect(
+        useCallback(() => {
+            load();
+        }, [load])
+    );
+
+    // Reload when app comes from background to active (e.g. idle tab wake)
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', nextAppState => {
+            if (nextAppState === 'active') {
+                load();
+            }
+        });
+        return () => subscription.remove();
+    }, [load]);
 
     const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 

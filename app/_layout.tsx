@@ -22,7 +22,7 @@ export default function RootLayout() {
             style.textContent = `
                 @font-face {
                     font-family: 'MaterialCommunityIcons';
-                    src: url('https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.woff2') format('woff2');
+                    src: url('https://cdn.jsdelivr.net/npm/react-native-vector-icons@10.0.0/Fonts/MaterialCommunityIcons.ttf') format('truetype');
                 }
             `;
             document.head.appendChild(style);

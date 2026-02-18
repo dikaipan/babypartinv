@@ -4,6 +4,8 @@ import { PaperProvider } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useFonts } from 'expo-font';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { theme, Colors } from '../src/config/theme';
 import { useAuthStore } from '../src/stores/authStore';
 import { initOneSignal } from '../src/config/onesignal';
@@ -14,20 +16,9 @@ export default function RootLayout() {
     const { user, initialized, init, isRecovery } = useAuthStore();
     const segments = useSegments();
     const router = useRouter();
-
-    // Inject font via CDN to ensure it works on web (bypassing bundler issues)
-    useEffect(() => {
-        if (Platform.OS === 'web') {
-            const style = document.createElement('style');
-            style.textContent = `
-                @font-face {
-                    font-family: 'MaterialCommunityIcons';
-                    src: url('https://cdn.jsdelivr.net/npm/react-native-vector-icons@10.0.0/Fonts/MaterialCommunityIcons.ttf') format('truetype');
-                }
-            `;
-            document.head.appendChild(style);
-        }
-    }, []);
+    const [fontsLoaded] = useFonts({
+        ...MaterialCommunityIcons.font,
+    });
 
     useEffect(() => {
         init();
@@ -106,7 +97,7 @@ export default function RootLayout() {
         };
     }, [isWeb, isAdmin]);
 
-    if (!initialized) {
+    if (!initialized || !fontsLoaded) {
         return (
             <GestureHandlerRootView style={styles.flex}>
                 <PaperProvider theme={theme}>

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, LayoutAnimation, Platform, UIManager, Modal, Share } from 'react-native';
 import { Text, Chip, Searchbar, Button, SegmentedButtons } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
@@ -253,7 +253,18 @@ export default function ReportsPage() {
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
-    const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     // Build part name lookup
     const partNameMap = useMemo(() => {

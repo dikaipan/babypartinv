@@ -15,7 +15,7 @@ export default function RootLayout() {
     const { user, initialized, init, isRecovery } = useAuthStore();
     const segments = useSegments();
     const router = useRouter();
-    const [fontsLoaded] = useFonts({
+    const [fontsLoaded, fontError] = useFonts({
         // Serve icon font from public/ to avoid Cloudflare skipping assets under /assets/node_modules/.
         'material-community': '/fonts/MaterialCommunityIcons.ttf',
     });
@@ -97,7 +97,7 @@ export default function RootLayout() {
         };
     }, [isWeb, isAdmin]);
 
-    if (!initialized || !fontsLoaded) {
+    if (!initialized || (!fontsLoaded && !fontError)) {
         return (
             <GestureHandlerRootView style={styles.flex}>
                 <PaperProvider theme={theme}>

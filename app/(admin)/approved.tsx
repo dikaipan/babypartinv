@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, useWindowDimensions, Pressable, Modal, ScrollView } from 'react-native';
 import { Text, Button, Chip } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
@@ -107,7 +107,18 @@ export default function ApprovedPage() {
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
-    const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const getAdjustmentsForRequest = useCallback((request: MonthlyRequest & { engineer?: Profile }) => {
         return buildAdjustments((request.items as RequestItem[]) || [], adjustmentsByRequest[request.id]);

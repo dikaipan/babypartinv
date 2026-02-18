@@ -54,6 +54,10 @@ export default function DashboardPage() {
         }, [load])
     );
 
+    useEffect(() => {
+        load();
+    }, [load]);
+
     // Reload when app comes from background to active (e.g. idle tab wake)
     useEffect(() => {
         const subscription = AppState.addEventListener('change', nextAppState => {
@@ -64,7 +68,14 @@ export default function DashboardPage() {
         return () => subscription.remove();
     }, [load]);
 
-    const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+    const onRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const cardWidth = width >= 768 ? (width - 280) / 4 - 16 : (width - 48) / 2 - 8;
 

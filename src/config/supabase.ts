@@ -24,7 +24,33 @@ const nativeStorage = {
     removeItem: (key: string) => SecureStore.deleteItemAsync(key),
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const retryingFetch: typeof fetch = async (input, init) => {
+    const maxAttempts = 2;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            return await fetch(input, init);
+        } catch (error) {
+            lastError = error;
+            if (attempt >= maxAttempts) throw error;
+            await sleep(250 * attempt);
+        }
+    }
+
+    throw lastError;
+};
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    db: {
+        // Prevent web queries from hanging indefinitely.
+        timeout: 15000,
+    },
+    global: {
+        fetch: retryingFetch,
+    },
     auth: {
         storage: Platform.OS === 'web' ? webStorage : nativeStorage,
         autoRefreshToken: true,

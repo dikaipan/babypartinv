@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, useWindowDimensions, Pressable, Modal } from 'react-native';
 import { Text, Button } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
@@ -126,7 +126,18 @@ export default function ReviewPage() {
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
-    const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const approve = async (id: string) => {
         const { error: err } = await supabase.from('monthly_requests').update({

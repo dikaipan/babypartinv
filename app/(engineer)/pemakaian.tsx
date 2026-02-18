@@ -141,8 +141,11 @@ export default function PemakaianPage() {
 
     const onRefresh = async () => {
         setRefreshing(true);
-        await loadReports();
-        setRefreshing(false);
+        try {
+            await loadReports();
+        } finally {
+            setRefreshing(false);
+        }
     };
 
     const openSelectSheet = () => {

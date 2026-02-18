@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, useWindowDimensions, Platform, ScrollView } from 'react-native';
 import { Text, Searchbar, Chip, IconButton, Portal, Modal, TextInput, Button, Menu, Divider } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
@@ -79,11 +79,17 @@ export default function UsersPage() {
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
+    useEffect(() => {
+        load();
+    }, [load]);
 
     const onRefresh = async () => {
         setRefreshing(true);
-        await load();
-        setRefreshing(false);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
     };
 
     const openManageUser = (profile: Profile) => {

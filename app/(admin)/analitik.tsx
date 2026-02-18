@@ -377,7 +377,18 @@ export default function AnalitikPage() {
     }, []);
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
-    const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    const onRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const dailyPartChart = useMemo(() => buildDailyPartChart(usageRows, 14), [usageRows]);
     const topChartParts = useMemo(() => dailyPartChart.series.slice(0, CHART_DEFAULT_PART_LIMIT), [dailyPartChart]);

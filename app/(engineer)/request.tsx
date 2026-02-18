@@ -110,7 +110,14 @@ export default function RequestPage() {
 
     useFocusEffect(useCallback(() => { load(); }, [load]));
 
-    const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+    const onRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const closeCreate = () => {
         setShowCreate(false);
@@ -761,5 +768,4 @@ export default function RequestPage() {
         </View>
     );
 }
-
 

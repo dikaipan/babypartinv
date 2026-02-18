@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, useWindowDimensions, Pressable, Share, Platform, ScrollView } from 'react-native';
 import { Text, Searchbar, Portal, Modal, TextInput, Button, Chip } from 'react-native-paper';
 import { useFocusEffect } from 'expo-router';
@@ -62,11 +62,17 @@ export default function InventoryPage() {
     useFocusEffect(useCallback(() => {
         load();
     }, [load]));
+    useEffect(() => {
+        load();
+    }, [load]);
 
     const onRefresh = async () => {
         setRefreshing(true);
-        await load();
-        setRefreshing(false);
+        try {
+            await load();
+        } finally {
+            setRefreshing(false);
+        }
     };
 
     const searchedParts = useMemo(() => {

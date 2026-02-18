@@ -49,8 +49,11 @@ export default function NotificationsPage() {
 
     const onRefresh = async () => {
         setRefreshing(true);
-        await loadNotifications();
-        setRefreshing(false);
+        try {
+            await loadNotifications();
+        } finally {
+            setRefreshing(false);
+        }
     };
 
     const handlePress = async (notification: AppNotification) => {

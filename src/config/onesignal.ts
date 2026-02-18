@@ -27,6 +27,17 @@ type OneSignalWebSdk = {
 
 let oneSignalWebInitPromise: Promise<OneSignalWebSdk> | null = null;
 let oneSignalWebInitialized = false;
+const ONE_SIGNAL_WEB_INIT_FLAG = '__babypartOneSignalWebInitialized';
+
+const isSdkAlreadyInitializedError = (error: unknown) => {
+    const message =
+        error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+                ? error
+                : '';
+    return message.toLowerCase().includes('already initialized');
+};
 
 const getWebPushSubscription = (sdk: OneSignalWebSdk): OneSignalWebPushSubscription | undefined =>
     sdk.User?.PushSubscription || sdk.User?.pushSubscription;
@@ -42,15 +53,23 @@ const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
 
     oneSignalWebInitPromise = new Promise<OneSignalWebSdk>((resolve, reject) => {
         const win = window as any;
+        oneSignalWebInitialized = oneSignalWebInitialized || !!win[ONE_SIGNAL_WEB_INIT_FLAG];
         win.OneSignalDeferred = win.OneSignalDeferred || [];
         win.OneSignalDeferred.push(async (oneSignalSdk: OneSignalWebSdk) => {
             try {
                 if (!oneSignalWebInitialized) {
-                    await oneSignalSdk.init({
-                        appId: ONESIGNAL_APP_ID,
-                        allowLocalhostAsSecureOrigin: true,
-                    });
+                    try {
+                        await oneSignalSdk.init({
+                            appId: ONESIGNAL_APP_ID,
+                            allowLocalhostAsSecureOrigin: true,
+                        });
+                    } catch (error) {
+                        if (!isSdkAlreadyInitializedError(error)) {
+                            throw error;
+                        }
+                    }
                     oneSignalWebInitialized = true;
+                    win[ONE_SIGNAL_WEB_INIT_FLAG] = true;
                 }
                 resolve(oneSignalSdk);
             } catch (error) {

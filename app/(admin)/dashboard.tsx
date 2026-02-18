@@ -27,8 +27,7 @@ type DashboardUsageRow = {
     id: string;
     engineer_id: string | null;
     so_number: string | null;
-    date?: string | null;
-    created_at?: string | null;
+    date: string | null;
 };
 
 type DashboardNotificationRow = {
@@ -82,16 +81,6 @@ const shortId = (value: string | null | undefined): string => {
 };
 
 const isNonNull = <T,>(value: T | null): value is T => value !== null;
-
-const isUsageReportsDateMissingError = (error: unknown) => {
-    if (!error || typeof error !== 'object') return false;
-    const message = String((error as { message?: unknown }).message || '').toLowerCase();
-    return message.includes('usage_reports') && message.includes('date') && (
-        message.includes('column')
-        || message.includes('schema cache')
-        || message.includes('could not find')
-    );
-};
 
 const engineerDisplayName = (engineerId: string | null, engineerNameMap: Map<string, string>): string => {
     if (!engineerId) return 'Engineer tidak diketahui';
@@ -220,24 +209,6 @@ const buildRequestActivity = (
 };
 
 const fetchDashboardData = async (): Promise<DashboardData> => {
-    const fetchUsageFeedRows = async () => {
-        let response: any = await supabase
-            .from('usage_reports')
-            .select('id, engineer_id, so_number, date, created_at')
-            .order('date', { ascending: false })
-            .limit(20);
-
-        if (response.error && isUsageReportsDateMissingError(response.error)) {
-            response = await supabase
-                .from('usage_reports')
-                .select('id, engineer_id, so_number, created_at')
-                .order('created_at', { ascending: false })
-                .limit(20);
-        }
-
-        return response;
-    };
-
     const [usersRes, notifRes, requestFeedRes, usageFeedRes, notificationFeedRes] = await Promise.all([
         supabase.from('profiles').select('id, name, role', { count: 'exact' }),
         supabase.from('notifications').select('id', { count: 'exact' }).eq('is_read', false),
@@ -246,7 +217,11 @@ const fetchDashboardData = async (): Promise<DashboardData> => {
             .select('id, status, engineer_id, submitted_at, reviewed_at, delivered_at, confirmed_at, cancelled_at')
             .order('submitted_at', { ascending: false })
             .limit(20),
-        fetchUsageFeedRows(),
+        supabase
+            .from('usage_reports')
+            .select('id, engineer_id, so_number, date')
+            .order('date', { ascending: false })
+            .limit(20),
         supabase
             .from('notifications')
             .select('id, title, body, created_at, is_read')
@@ -275,7 +250,7 @@ const fetchDashboardData = async (): Promise<DashboardData> => {
 
     const usageActivities = ((usageFeedRes.data || []) as DashboardUsageRow[])
         .map((row) => {
-            const timestamp = row.date || row.created_at || null;
+            const timestamp = row.date;
             if (!timestamp) return null;
             return {
                 id: row.id,

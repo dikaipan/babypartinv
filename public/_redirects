@@ -3,7 +3,9 @@
 /reset-password.html  /reset-password.html  200
 /confirm.html         /confirm.html         200
 /OneSignalSDKWorker.js /OneSignalSDKWorker.js 200
+/OneSignalSDKWorker. /OneSignalSDKWorker.js 200
 /OneSignalSDKUpdaterWorker.js /OneSignalSDKUpdaterWorker.js 200
+/OneSignalSDKUpdaterWorker. /OneSignalSDKUpdaterWorker.js 200
 /fonts/*              /fonts/:splat         200
 /assets/*             /assets/:splat        200
 /_expo/*              /_expo/:splat         200

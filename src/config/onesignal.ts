@@ -101,6 +101,9 @@ const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
                         await oneSignalSdk.init({
                             appId: ONESIGNAL_APP_ID,
                             allowLocalhostAsSecureOrigin: true,
+                            serviceWorkerPath: '/OneSignalSDKWorker.js',
+                            serviceWorkerUpdaterPath: '/OneSignalSDKUpdaterWorker.js',
+                            serviceWorkerParam: { scope: '/' },
                         });
                     } catch (error) {
                         if (isWebPushNotConfiguredError(error)) {

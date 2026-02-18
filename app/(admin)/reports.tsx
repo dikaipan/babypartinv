@@ -30,7 +30,6 @@ type MonitorRequestRow = {
 
 type UsageReportRow = {
     date: string | null;
-    created_at?: string | null;
     items: any;
 };
 
@@ -103,16 +102,6 @@ const formatDayKey = (ms: number): string => {
     return `${y}-${m}-${d}`;
 };
 
-const isUsageReportsDateMissingError = (error: unknown) => {
-    if (!error || typeof error !== 'object') return false;
-    const message = String((error as { message?: unknown }).message || '').toLowerCase();
-    return message.includes('usage_reports') && message.includes('date') && (
-        message.includes('column')
-        || message.includes('schema cache')
-        || message.includes('could not find')
-    );
-};
-
 const parseUsageItems = (rawItems: any): { partId: string; partName: string; quantity: number }[] => {
     if (!Array.isArray(rawItems)) return [];
     return rawItems
@@ -160,14 +149,6 @@ type ReportsData = {
 };
 
 const fetchReportsData = async (): Promise<ReportsData> => {
-    const fetchUsageRows = async () => {
-        let response = await supabase.from('usage_reports').select('date, created_at, items');
-        if (response.error && isUsageReportsDateMissingError(response.error)) {
-            response = await supabase.from('usage_reports').select('created_at, items');
-        }
-        return response;
-    };
-
     const [profilesRes, stockRes, partsRes, adjRes, delRes, openReqRes, usageRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('role', 'engineer'),
         supabase.from('engineer_stock').select('*'),
@@ -175,7 +156,7 @@ const fetchReportsData = async (): Promise<ReportsData> => {
         supabase.from('stock_adjustments').select('*').order('timestamp', { ascending: false }).limit(50),
         supabase.from('monthly_requests').select('*, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)').in('status', ['delivered', 'completed']).order('delivered_at', { ascending: false }).limit(50),
         supabase.from('monthly_requests').select('id, status, submitted_at, reviewed_at, delivered_at, confirmed_at').in('status', [...REQUEST_OPEN_STATUSES]),
-        fetchUsageRows(),
+        supabase.from('usage_reports').select('date, items'),
     ]);
 
     const firstError = [
@@ -192,7 +173,7 @@ const fetchReportsData = async (): Promise<ReportsData> => {
 
     const usageReportsRaw = Array.isArray(usageRes.data) ? (usageRes.data as UsageReportRow[]) : [];
     const usageReports = usageReportsRaw.map((row) => ({
-        date: row.date || row.created_at || null,
+        date: row.date || null,
         items: row.items,
     }));
 

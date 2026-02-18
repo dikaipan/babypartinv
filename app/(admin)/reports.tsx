@@ -1,12 +1,12 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, LayoutAnimation, Platform, UIManager, Modal, Share } from 'react-native';
 import { Text, Chip, Searchbar, Button, SegmentedButtons } from 'react-native-paper';
-import { useFocusEffect } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { Profile, EngineerStock, InventoryPart } from '../../src/types';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { normalizeArea } from '../../src/utils/normalizeArea';
@@ -137,6 +137,52 @@ const getAlertVisual = (severity: AlertSeverity) => {
     };
 };
 
+type ReportsData = {
+    profiles: Profile[];
+    engineerStocks: EngineerStock[];
+    parts: InventoryPart[];
+    adjustments: any[];
+    deliveries: any[];
+    monitorRequests: MonitorRequestRow[];
+    usageReports: UsageReportRow[];
+    fetchedAt: string;
+};
+
+const fetchReportsData = async (): Promise<ReportsData> => {
+    const [profilesRes, stockRes, partsRes, adjRes, delRes, openReqRes, usageRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('role', 'engineer'),
+        supabase.from('engineer_stock').select('*'),
+        supabase.from('inventory').select('*'),
+        supabase.from('stock_adjustments').select('*').order('timestamp', { ascending: false }).limit(50),
+        supabase.from('monthly_requests').select('*, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)').in('status', ['delivered', 'completed']).order('delivered_at', { ascending: false }).limit(50),
+        supabase.from('monthly_requests').select('id, status, submitted_at, reviewed_at, delivered_at, confirmed_at').in('status', [...REQUEST_OPEN_STATUSES]),
+        supabase.from('usage_reports').select('date, items'),
+    ]);
+
+    const firstError = [
+        profilesRes.error,
+        stockRes.error,
+        partsRes.error,
+        adjRes.error,
+        delRes.error,
+        openReqRes.error,
+        usageRes.error,
+    ].find(Boolean);
+
+    if (firstError) throw firstError;
+
+    return {
+        profiles: profilesRes.data || [],
+        engineerStocks: stockRes.data || [],
+        parts: partsRes.data || [],
+        adjustments: adjRes.data || [],
+        deliveries: delRes.data || [],
+        monitorRequests: (openReqRes.data || []) as MonitorRequestRow[],
+        usageReports: (usageRes.data || []) as UsageReportRow[],
+        fetchedAt: new Date().toISOString(),
+    };
+};
+
 /* ─── Custom Dropdown ─── */
 function Dropdown({ label, icon, value, options, onChange }: {
     label: string; icon: string; value: string; options: string[];
@@ -219,73 +265,39 @@ export default function ReportsPage() {
     const [search, setSearch] = useState('');
     const [filterArea, setFilterArea] = useState('Semua Area');
     const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
-    const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
     const [error, setError] = useState('');
-
-    // Monitor data
-    const [profiles, setProfiles] = useState<Profile[]>([]);
-    const [engineerStocks, setEngineerStocks] = useState<EngineerStock[]>([]);
-    const [parts, setParts] = useState<InventoryPart[]>([]);
-    const [monitorRequests, setMonitorRequests] = useState<MonitorRequestRow[]>([]);
-    const [usageReports, setUsageReports] = useState<UsageReportRow[]>([]);
-
-    // Delivery & Logs
-    const [adjustments, setAdjustments] = useState<any[]>([]);
-    const [deliveries, setDeliveries] = useState<any[]>([]);
+    const reportsQuery = useQuery({
+        queryKey: ['admin', 'reports'],
+        queryFn: fetchReportsData,
+    });
+    const lastUpdatedAt = reportsQuery.data?.fetchedAt || null;
+    const profiles = reportsQuery.data?.profiles || [];
+    const engineerStocks = reportsQuery.data?.engineerStocks || [];
+    const parts = reportsQuery.data?.parts || [];
+    const monitorRequests = reportsQuery.data?.monitorRequests || [];
+    const usageReports = reportsQuery.data?.usageReports || [];
+    const adjustments = reportsQuery.data?.adjustments || [];
+    const deliveries = reportsQuery.data?.deliveries || [];
 
     const isWide = width >= 768;
 
-    const load = useCallback(async () => {
-        try {
-            const [profilesRes, stockRes, partsRes, adjRes, delRes, openReqRes, usageRes] = await Promise.all([
-                supabase.from('profiles').select('*').eq('role', 'engineer'),
-                supabase.from('engineer_stock').select('*'),
-                supabase.from('inventory').select('*'),
-                supabase.from('stock_adjustments').select('*').order('timestamp', { ascending: false }).limit(50),
-                supabase.from('monthly_requests').select('*, engineer:profiles!monthly_requests_engineer_id_fkey(name, employee_id, location)').in('status', ['delivered', 'completed']).order('delivered_at', { ascending: false }).limit(50),
-                supabase.from('monthly_requests').select('id, status, submitted_at, reviewed_at, delivered_at, confirmed_at').in('status', [...REQUEST_OPEN_STATUSES]),
-                supabase.from('usage_reports').select('date, items'),
-            ]);
-
-            const firstError = [
-                profilesRes.error,
-                stockRes.error,
-                partsRes.error,
-                adjRes.error,
-                delRes.error,
-                openReqRes.error,
-                usageRes.error,
-            ].find(Boolean);
-
-            if (firstError) {
-                throw firstError;
-            }
-
-            setProfiles(profilesRes.data || []);
-            setEngineerStocks(stockRes.data || []);
-            setParts(partsRes.data || []);
-            setAdjustments(adjRes.data || []);
-            setDeliveries(delRes.data || []);
-            setMonitorRequests((openReqRes.data || []) as MonitorRequestRow[]);
-            setUsageReports((usageRes.data || []) as UsageReportRow[]);
-            setLastUpdatedAt(new Date().toISOString());
-            setError('');
-        } catch (error) {
-            console.error('Failed to load reports data:', error);
-            setError((error as any)?.message || 'Gagal memuat data reports.');
-        }
-    }, []);
-
-    useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load);
+        if (!reportsQuery.error) return;
+        const message = reportsQuery.error instanceof Error ? reportsQuery.error.message : 'Gagal memuat data reports.';
+        setError(message);
+    }, [reportsQuery.error]);
+
+    useSupabaseRealtimeRefresh(
+        ['profiles', 'engineer_stock', 'inventory', 'stock_adjustments', 'monthly_requests', 'usage_reports'],
+        () => {
+            void reportsQuery.refetch();
+        },
+    );
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await reportsQuery.refetch();
         } finally {
             setRefreshing(false);
         }

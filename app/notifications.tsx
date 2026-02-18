@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, Pressable } from 'react-native';
 import { Text, IconButton, ActivityIndicator } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../src/config/theme';
 
@@ -10,47 +11,53 @@ import { supabase } from '../src/config/supabase';
 import { useAuthStore } from '../src/stores/authStore';
 import { AppNotification } from '../src/types';
 import AppSnackbar from '../src/components/AppSnackbar';
+import { useSupabaseRealtimeRefresh } from '../src/hooks/useSupabaseRealtimeRefresh';
+
+const fetchNotificationsByUser = async (userId: string): Promise<AppNotification[]> => {
+    const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+    if (error) throw error;
+    return data || [];
+};
 
 export default function NotificationsPage() {
     const { user } = useAuthStore();
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const [notifications, setNotifications] = useState<AppNotification[]>([]);
-    const [loading, setLoading] = useState(true);
+    const queryClient = useQueryClient();
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState('');
 
-    const loadNotifications = useCallback(async () => {
-        if (!user) return;
-        try {
-            const { data, error: err } = await supabase
-                .from('notifications')
-                .select('*')
-                .eq('user_id', user.id)
-                .order('created_at', { ascending: false })
-                .limit(50);
+    const notificationsQuery = useQuery({
+        queryKey: ['notifications', user?.id],
+        queryFn: () => fetchNotificationsByUser(user!.id),
+        enabled: !!user?.id,
+    });
+    const notifications = notificationsQuery.data || [];
+    const loading = notificationsQuery.isLoading;
 
-            if (err) throw err;
-            setNotifications(data || []);
-        } catch (e: any) {
-            console.error('Error loading notifications:', e);
-            // Don't show snackbar for missing table if that's the case, but good for debugging
-            // setError(e.message); 
-        } finally {
-            setLoading(false);
-        }
-    }, [user]);
+    useSupabaseRealtimeRefresh(
+        ['notifications'],
+        () => {
+            void notificationsQuery.refetch();
+        },
+        { enabled: !!user?.id },
+    );
 
-    useFocusEffect(useCallback(() => {
-        loadNotifications();
-        // Mark all as read on open? Or maybe individually? 
-        // For now let's just View them.
-    }, [loadNotifications]));
+    useEffect(() => {
+        if (!notificationsQuery.error) return;
+        const message = notificationsQuery.error instanceof Error ? notificationsQuery.error.message : 'Gagal memuat notifikasi.';
+        setError(message);
+    }, [notificationsQuery.error]);
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await loadNotifications();
+            await notificationsQuery.refetch();
         } finally {
             setRefreshing(false);
         }
@@ -60,7 +67,10 @@ export default function NotificationsPage() {
         // Mark as read
         if (!notification.is_read) {
             await supabase.from('notifications').update({ is_read: true }).eq('id', notification.id);
-            setNotifications(prev => prev.map(n => n.id === notification.id ? { ...n, is_read: true } : n));
+            queryClient.setQueryData<AppNotification[]>(
+                ['notifications', user?.id],
+                (prev = []) => prev.map((n) => (n.id === notification.id ? { ...n, is_read: true } : n)),
+            );
         }
 
         // Handle navigation based on type/data if needed
@@ -69,7 +79,10 @@ export default function NotificationsPage() {
 
     const markAllRead = async () => {
         if (!user) return;
-        setNotifications(prev => prev.map(n => ({ ...n, is_read: true }))); // Optimistic update
+        queryClient.setQueryData<AppNotification[]>(
+            ['notifications', user.id],
+            (prev = []) => prev.map((n) => ({ ...n, is_read: true })),
+        );
         await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id);
     };
 

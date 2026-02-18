@@ -1,7 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, useWindowDimensions, Pressable, Modal, ScrollView } from 'react-native';
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import { View, StyleSheet, RefreshControl, useWindowDimensions, Pressable, Modal, ScrollView } from 'react-native';
 import { Text, Button, Chip } from 'react-native-paper';
-import { useFocusEffect } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
@@ -10,8 +10,8 @@ import { supabase } from '../../src/config/supabase';
 import { MonthlyRequest, RequestItem, Profile } from '../../src/types';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { NotificationService } from '../../src/services/NotificationService';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
-import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
+import { normalizeArea } from '../../src/utils/normalizeArea';
 
 type DeliveryAdjustment = {
     partId: string;
@@ -22,6 +22,14 @@ type DeliveryAdjustment = {
 type InventoryMeta = {
     part_name: string;
     total_stock: number;
+};
+
+type ApprovedAreaGroup = {
+    area: string;
+    requests: (MonthlyRequest & { engineer?: Profile })[];
+    totalItems: number;
+    totalQty: number;
+    adjustedCount: number;
 };
 
 function toSafeQty(value: number) {
@@ -66,10 +74,19 @@ function toDeliveredItems(items: DeliveryAdjustment[]) {
         .map((item) => ({ partId: item.partId, quantity: item.deliverQty }));
 }
 
+const fetchApprovedRequests = async (): Promise<(MonthlyRequest & { engineer?: Profile })[]> => {
+    const { data, error } = await supabase
+        .from('monthly_requests')
+        .select('*, engineer:profiles!monthly_requests_engineer_id_fkey(*)')
+        .eq('status', 'approved')
+        .order('reviewed_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+};
+
 export default function ApprovedPage() {
     const { width } = useWindowDimensions();
     const { user } = useAuthStore();
-    const [requests, setRequests] = useState<(MonthlyRequest & { engineer?: Profile })[]>([]);
     const [refreshing, setRefreshing] = useState(false);
     const [success, setSuccess] = useState('');
     const [error, setError] = useState('');
@@ -80,30 +97,23 @@ export default function ApprovedPage() {
     const [adjustInventory, setAdjustInventory] = useState<Record<string, InventoryMeta>>({});
     const [adjustLoading, setAdjustLoading] = useState(false);
 
-    const isWide = width >= 768;
-    const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
-    const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
-    const effectiveWidth = width - sidebarWidth;
-    const numColumns = isWide ? 2 : 1;
-    const cardGap = 16;
-    const cardWidth = (effectiveWidth - 40 - (cardGap * (numColumns - 1))) / numColumns;
+    const isWide = width >= 900;
+    const approvedQuery = useQuery({
+        queryKey: ['admin', 'approved'],
+        queryFn: fetchApprovedRequests,
+        enabled: !!user,
+    });
+    const requests = approvedQuery.data || [];
 
-    const load = useCallback(async () => {
-        const { data, error: loadError } = await supabase
-            .from('monthly_requests')
-            .select('*, engineer:profiles!monthly_requests_engineer_id_fkey(*)')
-            .eq('status', 'approved')
-            .order('reviewed_at', { ascending: false });
-        if (loadError) {
-            setError(loadError.message);
-            return;
-        }
+    const resolveAreaGroup = useCallback((request: MonthlyRequest & { engineer?: Profile }) => {
+        const location = request.engineer?.location;
+        return location ? normalizeArea(location) : 'Unknown Area';
+    }, []);
 
-        const rows = data || [];
-        setRequests(rows);
+    useEffect(() => {
         setAdjustmentsByRequest((prev) => {
             const next: Record<string, DeliveryAdjustment[]> = {};
-            for (const row of rows) {
+            for (const row of requests) {
                 const prevDraft = prev[row.id];
                 if (!prevDraft) continue;
                 const normalized = buildAdjustments((row.items as RequestItem[]) || [], prevDraft);
@@ -111,19 +121,26 @@ export default function ApprovedPage() {
             }
             return next;
         });
-        setError('');
-    }, []);
+    }, [requests]);
 
-    useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load);
+        if (!approvedQuery.error) return;
+        const message = approvedQuery.error instanceof Error ? approvedQuery.error.message : 'Gagal memuat approved requests.';
+        setError(message);
+    }, [approvedQuery.error]);
+
+    useSupabaseRealtimeRefresh(
+        ['monthly_requests', 'inventory'],
+        () => {
+            void approvedQuery.refetch();
+        },
+        { enabled: !!user },
+    );
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await approvedQuery.refetch();
         } finally {
             setRefreshing(false);
         }
@@ -132,6 +149,37 @@ export default function ApprovedPage() {
     const getAdjustmentsForRequest = useCallback((request: MonthlyRequest & { engineer?: Profile }) => {
         return buildAdjustments((request.items as RequestItem[]) || [], adjustmentsByRequest[request.id]);
     }, [adjustmentsByRequest]);
+
+    const groupedRequests = useMemo<ApprovedAreaGroup[]>(() => {
+        const grouped: Record<string, (MonthlyRequest & { engineer?: Profile })[]> = {};
+
+        for (const row of requests) {
+            const area = resolveAreaGroup(row);
+            if (!grouped[area]) grouped[area] = [];
+            grouped[area].push(row);
+        }
+
+        return Object.entries(grouped)
+            .map(([area, areaRequests]) => {
+                const allItems = areaRequests.flatMap((row) => ((row.items as RequestItem[]) || []));
+                const totalItems = allItems.length;
+                const totalQty = allItems.reduce((sum, item) => sum + toSafeQty(item.quantity), 0);
+                const adjustedCount = areaRequests.reduce((sum, row) => {
+                    const adjusted = hasAdjustedQty(
+                        buildAdjustments((row.items as RequestItem[]) || [], adjustmentsByRequest[row.id]),
+                    );
+                    return sum + (adjusted ? 1 : 0);
+                }, 0);
+                return {
+                    area,
+                    requests: areaRequests,
+                    totalItems,
+                    totalQty,
+                    adjustedCount,
+                };
+            })
+            .sort((a, b) => b.requests.length - a.requests.length || a.area.localeCompare(b.area));
+    }, [adjustmentsByRequest, requests, resolveAreaGroup]);
 
     const closeAdjustModal = () => {
         setAdjustingRequest(null);
@@ -366,11 +414,16 @@ export default function ApprovedPage() {
 
             // Notify Engineer
             if (request.engineer_id) {
-                NotificationService.sendToUser(request.engineer_id, 'Barang Dikirim', 'Admin telah mengirim request Anda. Segera konfirmasi penerimaan.');
+                void NotificationService.sendToUser(
+                    request.engineer_id,
+                    'Barang Dikirim',
+                    'Admin telah mengirim request Anda. Segera konfirmasi penerimaan.',
+                    { request_id: id, status: 'delivered', type: 'request_progress' },
+                ).catch((e) => console.error('[approved.markDelivered] Notification error:', e));
             }
 
             setSuccess('Pengiriman berhasil. Inventory admin diperbarui.');
-            await load();
+            await approvedQuery.refetch();
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Gagal memproses pengiriman.';
             setError(message);
@@ -383,7 +436,7 @@ export default function ApprovedPage() {
     const modalTotalDeliver = adjustingItems.reduce((sum, item) => sum + item.deliverQty, 0);
     const modalIsAdjusted = hasAdjustedQty(adjustingItems);
 
-    const renderItem = ({ item: r }: { item: MonthlyRequest & { engineer?: Profile } }) => {
+    const renderRequestCard = (r: MonthlyRequest & { engineer?: Profile }, area: string) => {
         const requestAdjustments = getAdjustmentsForRequest(r);
         const deliverItems = requestAdjustments.filter((item) => item.deliverQty > 0);
         const isAdjusted = hasAdjustedQty(requestAdjustments);
@@ -391,7 +444,7 @@ export default function ApprovedPage() {
         const totalDeliver = requestAdjustments.reduce((sum, item) => sum + item.deliverQty, 0);
 
         return (
-            <View style={[adminStyles.card, { width: cardWidth }]}>
+            <View key={r.id} style={[adminStyles.card, styles.reqCard, isWide ? styles.reqCardWide : styles.reqCardFull]}>
                 <View style={adminStyles.cardHeader}>
                     <View style={styles.userInfo}>
                         <View style={styles.avatar}>
@@ -400,6 +453,7 @@ export default function ApprovedPage() {
                         <View>
                             <Text style={styles.name}>{r.engineer?.name || 'Unknown'}</Text>
                             <Text style={styles.date}>{new Date(r.submitted_at).toLocaleDateString()} | {r.month}</Text>
+                            <Text style={styles.areaInfo}>Area Group: {area}</Text>
                         </View>
                     </View>
                     <View style={styles.headerChips}>
@@ -483,23 +537,52 @@ export default function ApprovedPage() {
                 </View>
             </View>
 
-            <FlatList
-                key={numColumns}
-                data={requests}
-                keyExtractor={r => r.id}
-                numColumns={numColumns}
+            <ScrollView
+                style={{ flex: 1 }}
                 indicatorStyle="black"
-                columnWrapperStyle={isWide ? { gap: cardGap } : undefined}
-                contentContainerStyle={adminStyles.scrollContent}
+                contentContainerStyle={[adminStyles.scrollContent, styles.groupListContent]}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
-                ListEmptyComponent={
+            >
+                {groupedRequests.length === 0 ? (
                     <View style={styles.emptyState}>
                         <MaterialCommunityIcons name="check-all" size={64} color={Colors.textMuted} />
                         <Text style={styles.emptyText}>No approved requests pending delivery.</Text>
                     </View>
-                }
-                renderItem={renderItem}
-            />
+                ) : (
+                    groupedRequests.map((group) => (
+                        <View key={group.area} style={styles.areaCard}>
+                            <View style={styles.areaHeader}>
+                                <View style={styles.areaHeaderMain}>
+                                    <View style={[adminStyles.iconBox, { backgroundColor: Colors.primary + '15' }]}>
+                                        <MaterialCommunityIcons name="map-marker" size={18} color={Colors.primary} />
+                                    </View>
+                                    <Text style={styles.areaName}>{group.area}</Text>
+                                </View>
+                                <View style={styles.areaTagRow}>
+                                    <View style={[styles.areaTag, { borderColor: Colors.primary + '55' }]}>
+                                        <Text style={[styles.areaTagText, { color: Colors.primary }]}>{group.requests.length} Request</Text>
+                                    </View>
+                                    <View style={[styles.areaTag, { borderColor: Colors.info + '55' }]}>
+                                        <Text style={[styles.areaTagText, { color: Colors.info }]}>{group.totalItems} Item</Text>
+                                    </View>
+                                    <View style={[styles.areaTag, { borderColor: Colors.accent + '55' }]}>
+                                        <Text style={[styles.areaTagText, { color: Colors.accent }]}>Total Qty: {group.totalQty}</Text>
+                                    </View>
+                                    {group.adjustedCount > 0 && (
+                                        <View style={[styles.areaTag, { borderColor: Colors.warning + '55' }]}>
+                                            <Text style={[styles.areaTagText, { color: Colors.warning }]}>{group.adjustedCount} Adjusted</Text>
+                                        </View>
+                                    )}
+                                </View>
+                            </View>
+
+                            <View style={[styles.reqGrid, !isWide && styles.reqGridStack]}>
+                                {group.requests.map((r) => renderRequestCard(r, group.area))}
+                            </View>
+                        </View>
+                    ))
+                )}
+            </ScrollView>
 
             <Modal
                 visible={!!adjustingRequest}
@@ -606,12 +689,41 @@ const styles = StyleSheet.create({
     countBadge: { backgroundColor: Colors.primary + '20', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
     countText: { color: Colors.primary, fontWeight: '800', fontSize: 16 },
 
-    userInfo: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+    groupListContent: { paddingBottom: 120, gap: 16 },
+    areaCard: {
+        backgroundColor: Colors.surface,
+        borderRadius: 14,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderLeftWidth: 4,
+        borderLeftColor: Colors.primary,
+    },
+    areaHeader: { gap: 10, marginBottom: 14 },
+    areaHeaderMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    areaName: { fontSize: 17, fontWeight: '800', color: Colors.text, textTransform: 'uppercase' },
+    areaTagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    areaTag: {
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+        borderWidth: 1,
+        backgroundColor: Colors.card,
+    },
+    areaTagText: { fontSize: 11, fontWeight: '700' },
+    reqGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' },
+    reqGridStack: { flexDirection: 'column' },
+    reqCard: { minWidth: 0 },
+    reqCardWide: { width: '48.8%' },
+    reqCardFull: { width: '100%' },
+
+    userInfo: { flexDirection: 'row', gap: 12, alignItems: 'center', flex: 1 },
     avatar: { width: 44, height: 44, borderRadius: 14, backgroundColor: Colors.primary + '15', justifyContent: 'center', alignItems: 'center' },
     avatarText: { fontSize: 18, fontWeight: '800', color: Colors.primary },
     name: { fontSize: 16, fontWeight: '700', color: Colors.text },
     date: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-    headerChips: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+    areaInfo: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+    headerChips: { flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' },
     statusChip: { backgroundColor: Colors.success + '15', height: 28 },
     statusText: { color: Colors.success, fontSize: 11, fontWeight: '700' },
     adjustedChip: { backgroundColor: Colors.warning + '15', height: 28 },

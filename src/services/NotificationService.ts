@@ -6,8 +6,8 @@ export const NotificationService = {
      * Send a notification to a specific user by their Supabase ID
      */
     sendToUser: async (userId: string, title: string, body: string, data?: any) => {
-        await sendNotification(title, body, { externalIds: [userId] }, data);
-        logNotification([userId], title, body, data).catch(e => console.error('[sendToUser] BG Log Error:', e));
+        if (!userId) return;
+        return await dispatchNotification([userId], title, body, { externalIds: [userId] }, data, 'sendToUser');
     },
 
     /**
@@ -26,9 +26,7 @@ export const NotificationService = {
         const userIds = users.map(u => u.id);
         // OneSignal API limits target list size, but for this scale it's likely fine.
         // If many users, better to use OneSignal Segments (not set up here) or batch.
-        const res = await sendNotification(title, body, { externalIds: userIds }, data);
-        logNotification(userIds, title, body, data).catch(e => console.error('[sendToRole] BG Log Error:', e));
-        return res;
+        return await dispatchNotification(userIds, title, body, { externalIds: userIds }, data, 'sendToRole');
     },
 
     /**
@@ -56,12 +54,19 @@ export const NotificationService = {
         console.log(`[Broadcast] Target: ${target}, Database User Count: ${userIds.length}`);
 
         if (target === 'all') {
-            const res = await sendNotification(title, body, { segments: ['Active Users', 'Subscribed Users'] });
-            if (userIds.length > 0) {
-                console.log(`[Broadcast] Logging to DB in background for ${userIds.length} users...`);
-                logNotification(userIds, title, body).catch(e => console.error('[Broadcast] BG Log Error:', e));
+            const [pushResult, logResult] = await Promise.allSettled([
+                sendNotification(title, body, { segments: ['Active Users', 'Subscribed Users'] }),
+                userIds.length > 0 ? logNotification(userIds, title, body) : Promise.resolve(),
+            ]);
+
+            if (logResult.status === 'rejected') {
+                console.error('[Broadcast] DB log error:', logResult.reason);
             }
-            return res;
+            if (pushResult.status === 'rejected') {
+                console.error('[Broadcast] Push error:', pushResult.reason);
+                return null;
+            }
+            return pushResult.value;
         } else {
             return await NotificationService.sendToRole(target, title, body);
         }
@@ -72,10 +77,33 @@ export const NotificationService = {
      */
     sendToUsers: async (userIds: string[], title: string, body: string, data?: any) => {
         if (!userIds.length) return;
-        await sendNotification(title, body, { externalIds: userIds }, data);
-        await logNotification(userIds, title, body, data);
+        return await dispatchNotification(userIds, title, body, { externalIds: userIds }, data, 'sendToUsers');
     }
 };
+
+async function dispatchNotification(
+    userIds: string[],
+    title: string,
+    body: string,
+    pushTarget: { externalIds?: string[]; playerIds?: string[]; segments?: string[] },
+    data?: any,
+    source: string = 'notification'
+) {
+    const [logResult, pushResult] = await Promise.allSettled([
+        logNotification(userIds, title, body, data),
+        sendNotification(title, body, pushTarget, data),
+    ]);
+
+    if (logResult.status === 'rejected') {
+        console.error(`[${source}] DB log error:`, logResult.reason);
+    }
+    if (pushResult.status === 'rejected') {
+        console.error(`[${source}] Push error:`, pushResult.reason);
+        return null;
+    }
+
+    return pushResult.value;
+}
 
 /**
  * Optional: Log notifications to a Supabase table 'notifications' if it exists.

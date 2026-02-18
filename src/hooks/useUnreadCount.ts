@@ -1,35 +1,36 @@
-import { useState, useCallback } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../config/supabase';
 import { useAuthStore } from '../stores/authStore';
+import { useSupabaseRealtimeRefresh } from './useSupabaseRealtimeRefresh';
+
+const fetchUnreadCount = async (userId: string): Promise<number> => {
+    const { count, error } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('is_read', false);
+    if (error) throw error;
+    return count || 0;
+};
 
 /**
  * Hook to fetch the unread notification count for the current user.
- * Refreshes on screen focus.
  */
 export function useUnreadCount() {
     const { user } = useAuthStore();
-    const [unreadCount, setUnreadCount] = useState(0);
+    const unreadQuery = useQuery({
+        queryKey: ['notifications', 'unreadCount', user?.id],
+        queryFn: () => fetchUnreadCount(user!.id),
+        enabled: !!user?.id,
+    });
 
-    useFocusEffect(
-        useCallback(() => {
-            if (!user) return;
-
-            const fetchCount = async () => {
-                const { count, error } = await supabase
-                    .from('notifications')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('user_id', user.id)
-                    .eq('is_read', false);
-
-                if (!error && count !== null) {
-                    setUnreadCount(count);
-                }
-            };
-
-            fetchCount();
-        }, [user])
+    useSupabaseRealtimeRefresh(
+        ['notifications'],
+        () => {
+            void unreadQuery.refetch();
+        },
+        { enabled: !!user?.id },
     );
 
-    return unreadCount;
+    return unreadQuery.data || 0;
 }

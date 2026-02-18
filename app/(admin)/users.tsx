@@ -1,14 +1,14 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, useWindowDimensions, Platform, ScrollView } from 'react-native';
 import { Text, Searchbar, Chip, IconButton, Portal, Modal, TextInput, Button, Menu, Divider } from 'react-native-paper';
-import { useFocusEffect } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Profile } from '../../src/types';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
@@ -32,10 +32,15 @@ const mapProfileToForm = (profile: Profile): UserFormState => ({
     is_active: profile.is_active,
 });
 
+const fetchUsers = async (): Promise<Profile[]> => {
+    const { data, error } = await supabase.from('profiles').select('*').order('name');
+    if (error) throw error;
+    return data || [];
+};
+
 export default function UsersPage() {
     const { width, height } = useWindowDimensions();
     const { user: currentUser, refreshProfile } = useAuthStore();
-    const [users, setUsers] = useState<Profile[]>([]);
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState<'all' | 'admin' | 'engineer'>('all');
     const [selectedLocation, setSelectedLocation] = useState<string>('all');
@@ -73,26 +78,31 @@ export default function UsersPage() {
     const numColumns = isWide ? 4 : 1; // 4 cols for users on wide screen
     const cardGap = 16;
     const cardWidth = (effectiveWidth - 40 - (cardGap * (numColumns - 1))) / numColumns;
+    const usersQuery = useQuery({
+        queryKey: ['admin', 'users'],
+        queryFn: fetchUsers,
+        enabled: !!currentUser,
+    });
+    const users = usersQuery.data || [];
 
-    const load = useCallback(async () => {
-        const { data, error: loadError } = await supabase.from('profiles').select('*').order('name');
-        if (loadError) {
-            setError(loadError.message);
-            return;
-        }
-        setUsers(data || []);
-    }, []);
+    useSupabaseRealtimeRefresh(
+        ['profiles'],
+        () => {
+            void usersQuery.refetch();
+        },
+        { enabled: !!currentUser },
+    );
 
-    useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load);
+        if (!usersQuery.error) return;
+        const message = usersQuery.error instanceof Error ? usersQuery.error.message : 'Gagal memuat users.';
+        setError(message);
+    }, [usersQuery.error]);
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await usersQuery.refetch();
         } finally {
             setRefreshing(false);
         }
@@ -154,7 +164,7 @@ export default function UsersPage() {
             if (currentUser?.id === selectedUser.id) {
                 await refreshProfile();
             }
-            await load();
+            await usersQuery.refetch();
             setSuccess('Data user berhasil diperbarui.');
             closeManageModal();
         } catch (err) {
@@ -242,7 +252,7 @@ export default function UsersPage() {
 
             if (deleteError) throw deleteError;
 
-            await load();
+            await usersQuery.refetch();
             setSuccess(`User ${selectedUser.name} berhasil dihapus.`);
             closeManageModal();
         } catch (err) {

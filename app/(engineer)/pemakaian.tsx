@@ -3,6 +3,7 @@ import { View, StyleSheet, FlatList, RefreshControl, Pressable, BackHandler, Pla
 import { Text, TextInput, IconButton, Searchbar } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetBackdropProps, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { Colors } from '../../src/config/theme';
@@ -10,8 +11,8 @@ import AppSnackbar from '../../src/components/AppSnackbar';
 import WebPullToRefreshBanner from '../../src/components/WebPullToRefreshBanner';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 import { useWebPullToRefresh } from '../../src/hooks/useWebPullToRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
 import { UsageReport, UsageItem, EngineerStock } from '../../src/types';
@@ -20,6 +21,32 @@ type StockWithName = EngineerStock & { part_name?: string };
 const SO_NUMBER_MIN_DIGIT_LENGTH = 8; // YYYYMMDD
 const SO_NUMBER_MAX_DIGIT_LENGTH = 20;
 const SO_NUMBER_PATTERN = new RegExp(`^\\d{${SO_NUMBER_MIN_DIGIT_LENGTH},${SO_NUMBER_MAX_DIGIT_LENGTH}}$`);
+
+const fetchEngineerUsageReports = async (engineerId: string): Promise<UsageReport[]> => {
+    const { data, error } = await supabase
+        .from('usage_reports')
+        .select('*')
+        .eq('engineer_id', engineerId)
+        .order('date', { ascending: false })
+        .limit(20);
+    if (error) throw error;
+    return data || [];
+};
+
+const fetchEngineerUsageStocks = async (engineerId: string): Promise<StockWithName[]> => {
+    const [stockRes, partsRes] = await Promise.all([
+        supabase.from('engineer_stock').select('*').eq('engineer_id', engineerId).gt('quantity', 0),
+        supabase.from('inventory').select('id, part_name'),
+    ]);
+
+    if (stockRes.error) throw stockRes.error;
+    if (partsRes.error) throw partsRes.error;
+
+    const partsMap: Record<string, string> = {};
+    (partsRes.data || []).forEach((p) => { partsMap[p.id] = p.part_name; });
+
+    return (stockRes.data || []).map((s) => ({ ...s, part_name: partsMap[s.part_id] || s.part_id }));
+};
 
 const hasValidSoDatePrefix = (value: string): boolean => {
     const datePrefix = value.slice(0, SO_NUMBER_MIN_DIGIT_LENGTH);
@@ -43,10 +70,7 @@ export default function PemakaianPage() {
     const [soNumber, setSoNumber] = useState('');
     const [description, setDescription] = useState('');
     const [items, setItems] = useState<UsageItem[]>([]);
-    const [reports, setReports] = useState<UsageReport[]>([]);
     const [refreshing, setRefreshing] = useState(false);
-    const [stocks, setStocks] = useState<StockWithName[]>([]);
-    const [loadingStocks, setLoadingStocks] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [sending, setSending] = useState(false);
@@ -81,57 +105,41 @@ export default function PemakaianPage() {
             pressBehavior="close"
         />
     ), []);
+    const reportsQuery = useQuery({
+        queryKey: ['engineer', 'usageReports', user?.id],
+        queryFn: () => fetchEngineerUsageReports(user!.id),
+        enabled: !!user?.id,
+    });
+    const stocksQuery = useQuery({
+        queryKey: ['engineer', 'usageStocks', user?.id],
+        queryFn: () => fetchEngineerUsageStocks(user!.id),
+        enabled: !!user?.id,
+    });
+    const reports = reportsQuery.data || [];
+    const stocks = stocksQuery.data || [];
+    const loadingStocks = stocksQuery.isFetching;
 
-    const loadReports = useCallback(async () => {
-        if (!user) return;
-        const { data, error: loadError } = await supabase
-            .from('usage_reports')
-            .select('*')
-            .eq('engineer_id', user.id)
-            .order('date', { ascending: false })
-            .limit(20);
-        if (loadError) {
-            setError(loadError.message);
-            return;
-        }
-        setReports(data || []);
-    }, [user]);
-
-    const loadStocks = useCallback(async () => {
-        if (!user) return;
-        setLoadingStocks(true);
-
-        const [stockRes, partsRes] = await Promise.all([
-            supabase.from('engineer_stock').select('*').eq('engineer_id', user.id).gt('quantity', 0),
-            supabase.from('inventory').select('id, part_name'),
-        ]);
-
-        if (stockRes.error) {
-            setError(stockRes.error.message);
-            setLoadingStocks(false);
-            return;
-        }
-        if (partsRes.error) {
-            setError(partsRes.error.message);
-            setLoadingStocks(false);
-            return;
-        }
-
-        const partsMap: Record<string, string> = {};
-        (partsRes.data || []).forEach(p => { partsMap[p.id] = p.part_name; });
-        setStocks((stockRes.data || []).map(s => ({ ...s, part_name: partsMap[s.part_id] || s.part_id })));
-        setLoadingStocks(false);
-    }, [user]);
-
-    useFocusEffect(useCallback(() => { loadReports(); }, [loadReports]));
-    useFocusEffect(useCallback(() => { loadStocks(); }, [loadStocks]));
     useEffect(() => {
-        loadReports();
-        loadStocks();
-    }, [loadReports, loadStocks]);
-    useWebAutoRefresh(() => {
-        void Promise.all([loadReports(), loadStocks()]);
-    }, { enabled: !!user });
+        const sourceError = reportsQuery.error || stocksQuery.error;
+        if (!sourceError) return;
+        const message = sourceError instanceof Error ? sourceError.message : 'Gagal memuat data pemakaian.';
+        setError(message);
+    }, [reportsQuery.error, stocksQuery.error]);
+
+    useSupabaseRealtimeRefresh(
+        ['usage_reports'],
+        () => {
+            void reportsQuery.refetch();
+        },
+        { enabled: !!user?.id },
+    );
+    useSupabaseRealtimeRefresh(
+        ['engineer_stock', 'inventory'],
+        () => {
+            void stocksQuery.refetch();
+        },
+        { enabled: !!user?.id },
+    );
     useFocusEffect(useCallback(() => {
         const onBackPress = () => {
             if (step === 'quantity') {
@@ -167,7 +175,7 @@ export default function PemakaianPage() {
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await Promise.all([loadReports(), loadStocks()]);
+            await Promise.all([reportsQuery.refetch(), stocksQuery.refetch()]);
         } finally {
             setRefreshing(false);
         }
@@ -182,7 +190,7 @@ export default function PemakaianPage() {
         setSearchQuery('');
         setStep('select');
         if (!loadingStocks) {
-            void loadStocks();
+            void stocksQuery.refetch();
         }
     };
 
@@ -269,7 +277,7 @@ export default function PemakaianPage() {
                 const available = stockMap.get(invalidItem.partId) || 0;
                 const itemName = invalidItem.partName || partNameById.get(invalidItem.partId) || invalidItem.partId;
                 setError(`Stok ${itemName} tidak cukup. Tersedia ${available} pcs.`);
-                await loadStocks();
+                await stocksQuery.refetch();
                 return;
             }
 
@@ -307,7 +315,7 @@ export default function PemakaianPage() {
             setSelectedStock(null);
             setQty(1);
             setSuccess('Laporan pemakaian berhasil dikirim!');
-            await Promise.all([loadReports(), loadStocks()]);
+            await Promise.all([reportsQuery.refetch(), stocksQuery.refetch()]);
         } catch (e: any) {
             setError(e.message || 'Gagal mengirim laporan');
         } finally {
@@ -433,7 +441,7 @@ export default function PemakaianPage() {
                             {/* History */}
                             <View style={styles.historyHeader}>
                                 <Text style={styles.historyTitle}>Riwayat Pemakaian</Text>
-                                <IconButton icon="refresh" size={20} iconColor={Colors.textSecondary} onPress={loadReports} />
+                                <IconButton icon="refresh" size={20} iconColor={Colors.textSecondary} onPress={() => void reportsQuery.refetch()} />
                             </View>
                         </View>
                     </>

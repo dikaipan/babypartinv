@@ -3,6 +3,7 @@ import { View, FlatList, RefreshControl, Pressable, BackHandler, Platform } from
 import { Text, FAB, Portal, Modal, IconButton, Searchbar } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetBackdrop, BottomSheetBackdropProps, BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { Colors } from '../../src/config/theme';
@@ -10,8 +11,8 @@ import AppSnackbar from '../../src/components/AppSnackbar';
 import WebPullToRefreshBanner from '../../src/components/WebPullToRefreshBanner';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 import { useWebPullToRefresh } from '../../src/hooks/useWebPullToRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import styles from '../../src/styles/requestStyles';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
@@ -31,12 +32,28 @@ const getMaxQtyForPart = (partName?: string, partId?: string) => (
     isLoopSheetPart(partName, partId) ? LOOPSHEET_MAX_QTY : DEFAULT_MAX_QTY
 );
 
+const fetchEngineerRequests = async (engineerId: string): Promise<MonthlyRequest[]> => {
+    const { data, error } = await supabase
+        .from('monthly_requests')
+        .select('*')
+        .eq('engineer_id', engineerId)
+        .neq('status', 'cancelled')
+        .order('submitted_at', { ascending: false });
+    if (error) throw error;
+    return data || [];
+};
+
+const fetchInventoryParts = async (): Promise<InventoryPart[]> => {
+    const { data, error } = await supabase.from('inventory').select('*').order('part_name');
+    if (error) throw error;
+    return data || [];
+};
+
 export default function RequestPage() {
     const { user } = useAuthStore();
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
     const unreadCount = useUnreadCount();
-    const [requests, setRequests] = useState<MonthlyRequest[]>([]);
     const [filter, setFilter] = useState<'all' | RequestStatus>('all');
     const [refreshing, setRefreshing] = useState(false);
     const [showCreate, setShowCreate] = useState(false);
@@ -44,7 +61,6 @@ export default function RequestPage() {
     // Steps: 'summary' -> 'select' -> 'quantity'
     const [step, setStep] = useState<'summary' | 'select' | 'quantity'>('summary');
 
-    const [parts, setParts] = useState<InventoryPart[]>([]);
     const [selectedItems, setSelectedItems] = useState<RequestItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [error, setError] = useState('');
@@ -95,42 +111,45 @@ export default function RequestPage() {
         };
     }, [navigation, showCreate, visibleTabStyle]);
 
-    const load = useCallback(async () => {
-        if (!user) return;
-        const { data, error } = await supabase
-            .from('monthly_requests')
-            .select('*')
-            .eq('engineer_id', user.id)
-            .neq('status', 'cancelled')
-            .order('submitted_at', { ascending: false });
-        if (error) {
-            setError(error.message);
-            return;
-        }
-        setRequests(data || []);
-        setError('');
-    }, [user]);
+    const requestsQuery = useQuery({
+        queryKey: ['engineer', 'requests', user?.id],
+        queryFn: () => fetchEngineerRequests(user!.id),
+        enabled: !!user?.id,
+    });
+    const partsQuery = useQuery({
+        queryKey: ['inventory', 'parts'],
+        queryFn: fetchInventoryParts,
+        enabled: !!user?.id,
+    });
+    const requests = requestsQuery.data || [];
+    const parts = partsQuery.data || [];
 
-    const loadParts = async () => {
-        const { data, error } = await supabase.from('inventory').select('*').order('part_name');
-        if (error) {
-            setError(error.message);
-            return;
-        }
-        setParts(data || []);
-        setError('');
-    };
-
-    useFocusEffect(useCallback(() => { load(); }, [load]));
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load, { enabled: !!user });
+        const sourceError = requestsQuery.error || partsQuery.error;
+        if (!sourceError) return;
+        const message = sourceError instanceof Error ? sourceError.message : 'Gagal memuat data request.';
+        setError(message);
+    }, [partsQuery.error, requestsQuery.error]);
+
+    useSupabaseRealtimeRefresh(
+        ['monthly_requests'],
+        () => {
+            void requestsQuery.refetch();
+        },
+        { enabled: !!user?.id },
+    );
+    useSupabaseRealtimeRefresh(
+        ['inventory'],
+        () => {
+            void partsQuery.refetch();
+        },
+        { enabled: !!user?.id },
+    );
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await requestsQuery.refetch();
         } finally {
             setRefreshing(false);
         }
@@ -178,7 +197,7 @@ export default function RequestPage() {
     const pendingCount = requests.filter(r => r.status === 'pending').length;
 
     const openCreate = async () => {
-        await loadParts();
+        await partsQuery.refetch();
         setSelectedItems([]);
         setSearchQuery('');
         setSelectedPart(null);
@@ -189,7 +208,7 @@ export default function RequestPage() {
     };
 
     const handleEdit = async (request: MonthlyRequest) => {
-        await loadParts();
+        await partsQuery.refetch();
         setSelectedItems(request.items as RequestItem[]);
         setSearchQuery('');
         setSelectedPart(null);
@@ -261,7 +280,12 @@ export default function RequestPage() {
             });
             err = error;
             if (!err) {
-                NotificationService.sendToRole('admin', 'New Request', `${user?.name} membuat request baru.`);
+                void NotificationService.sendToRole(
+                    'admin',
+                    'New Request',
+                    `${user?.name} membuat request baru.`,
+                    { status: 'pending', type: 'request_progress' },
+                ).catch((e) => console.error('[request.submit] Notification error:', e));
             }
         }
 
@@ -273,7 +297,7 @@ export default function RequestPage() {
         setQty(1);
         setSuccess(editingId ? 'Request diperbarui!' : 'Request berhasil dibuat!');
         setEditingId(null);
-        load();
+        await requestsQuery.refetch();
     };
 
     const cancelRequest = async (id: string) => {
@@ -288,7 +312,7 @@ export default function RequestPage() {
 
         if (!deleteError && deletedRows && deletedRows.length > 0) {
             setSuccess('Request dibatalkan');
-            load();
+            await requestsQuery.refetch();
             return;
         }
 
@@ -328,8 +352,13 @@ export default function RequestPage() {
             }
         }
         setSuccess('Request dibatalkan');
-        NotificationService.sendToRole('admin', 'Request Cancelled', `${user?.name} membatalkan request.`);
-        load();
+        void NotificationService.sendToRole(
+            'admin',
+            'Request Cancelled',
+            `${user?.name} membatalkan request.`,
+            { status: 'cancelled', type: 'request_progress' },
+        ).catch((e) => console.error('[request.cancel] Notification error:', e));
+        await requestsQuery.refetch();
     };
 
     const confirmDelivery = async (id: string) => {
@@ -428,8 +457,13 @@ export default function RequestPage() {
             }
 
             setSuccess('Penerimaan dikonfirmasi. Stok berhasil ditambahkan.');
-            NotificationService.sendToRole('admin', 'Delivery Confirmed', `${user?.name} telah menerima barang.`);
-            load();
+            void NotificationService.sendToRole(
+                'admin',
+                'Delivery Confirmed',
+                `${user?.name} telah menerima barang.`,
+                { request_id: id, status: 'completed', type: 'request_progress' },
+            ).catch((e) => console.error('[request.confirmDelivery] Notification error:', e));
+            await requestsQuery.refetch();
         } catch (e: any) {
             setError(e?.message || 'Gagal konfirmasi penerimaan.');
         } finally {

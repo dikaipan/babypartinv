@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, RefreshControl, useWindowDimensions, Pressable, Modal } from 'react-native';
 import { Text, Button } from 'react-native-paper';
-import { useFocusEffect } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
@@ -10,7 +10,8 @@ import { supabase } from '../../src/config/supabase';
 import { MonthlyRequest, RequestItem, Profile, EngineerStock } from '../../src/types';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { normalizeArea } from '../../src/utils/normalizeArea';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
+import { NotificationService } from '../../src/services/NotificationService';
 
 type UrgencyLevel = 'Kritis' | 'Tinggi' | 'Normal';
 
@@ -34,6 +35,34 @@ function getUrgency(pct: number): UrgencyLevel {
     if (pct >= 40) return 'Tinggi';
     return 'Normal';
 }
+
+type ReviewData = {
+    requests: (MonthlyRequest & { engineer?: Profile })[];
+    allProfiles: Profile[];
+    engineerStocks: EngineerStock[];
+};
+
+const fetchReviewData = async (): Promise<ReviewData> => {
+    const [reqRes, profilesRes, stockRes] = await Promise.all([
+        supabase
+            .from('monthly_requests')
+            .select('*, engineer:profiles!monthly_requests_engineer_id_fkey(*)')
+            .eq('status', 'pending')
+            .order('submitted_at', { ascending: false }),
+        supabase.from('profiles').select('*').eq('role', 'engineer'),
+        supabase.from('engineer_stock').select('*'),
+    ]);
+
+    if (reqRes.error) throw reqRes.error;
+    if (profilesRes.error) throw profilesRes.error;
+    if (stockRes.error) throw stockRes.error;
+
+    return {
+        requests: reqRes.data || [],
+        allProfiles: profilesRes.data || [],
+        engineerStocks: stockRes.data || [],
+    };
+};
 
 /* ─── Custom Dropdown ─── */
 function Dropdown({ label, icon, value, options, onChange, renderOption }: {
@@ -99,9 +128,6 @@ const ddStyles = StyleSheet.create({
 export default function ReviewPage() {
     const { width } = useWindowDimensions();
     const { user } = useAuthStore();
-    const [requests, setRequests] = useState<(MonthlyRequest & { engineer?: Profile })[]>([]);
-    const [engineerStocks, setEngineerStocks] = useState<EngineerStock[]>([]);
-    const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
     const [refreshing, setRefreshing] = useState(false);
     const [success, setSuccess] = useState('');
     const [error, setError] = useState('');
@@ -110,65 +136,76 @@ export default function ReviewPage() {
     const [selectedEngineer, setSelectedEngineer] = useState<(Profile & { stocks: { part_id: string; quantity: number }[] }) | null>(null);
 
     const isWide = width >= 900;
+    const isCompact = width < 560;
 
-    const load = useCallback(async () => {
-        const [reqRes, profilesRes, stockRes] = await Promise.all([
-            supabase
-                .from('monthly_requests')
-                .select('*, engineer:profiles!monthly_requests_engineer_id_fkey(*)')
-                .eq('status', 'pending')
-                .order('submitted_at', { ascending: false }),
-            supabase.from('profiles').select('*').eq('role', 'engineer'),
-            supabase.from('engineer_stock').select('*'),
-        ]);
-        if (reqRes.error) {
-            setError(reqRes.error.message);
-            return;
-        }
-        if (profilesRes.error) {
-            setError(profilesRes.error.message);
-            return;
-        }
-        if (stockRes.error) {
-            setError(stockRes.error.message);
-            return;
-        }
-        setRequests(reqRes.data || []);
-        setAllProfiles(profilesRes.data || []);
-        setEngineerStocks(stockRes.data || []);
-        setError('');
-    }, []);
+    const reviewQuery = useQuery({
+        queryKey: ['admin', 'review', 'pending'],
+        queryFn: fetchReviewData,
+        enabled: !!user,
+    });
 
-    useFocusEffect(useCallback(() => { load(); }, [load]));
+    const requests = reviewQuery.data?.requests || [];
+    const allProfiles = reviewQuery.data?.allProfiles || [];
+    const engineerStocks = reviewQuery.data?.engineerStocks || [];
+
+    useSupabaseRealtimeRefresh(
+        ['monthly_requests', 'engineer_stock', 'profiles'],
+        () => {
+            void reviewQuery.refetch();
+        },
+        { enabled: !!user },
+    );
+
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load);
+        if (!reviewQuery.error) return;
+        const message = reviewQuery.error instanceof Error ? reviewQuery.error.message : 'Gagal memuat review.';
+        setError(message);
+    }, [reviewQuery.error]);
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await reviewQuery.refetch();
         } finally {
             setRefreshing(false);
         }
     };
 
-    const approve = async (id: string) => {
+    const approve = async (request: MonthlyRequest & { engineer?: Profile }) => {
+        const id = request.id;
         const { error: err } = await supabase.from('monthly_requests').update({
             status: 'approved', reviewed_by: user!.id, reviewed_at: new Date().toISOString(),
         }).eq('id', id);
         if (err) { setError(err.message); return; }
-        setSuccess('Request approved'); load();
+        if (request.engineer_id) {
+            void NotificationService.sendToUser(
+                request.engineer_id,
+                'Request Disetujui',
+                'Request Anda telah disetujui admin.',
+                { request_id: id, status: 'approved', type: 'request_progress' },
+            ).catch((e) => console.error('[review.approve] Notification error:', e));
+        }
+        setSuccess('Request approved');
+        await reviewQuery.refetch();
     };
 
-    const reject = async (id: string) => {
+    const reject = async (request: MonthlyRequest & { engineer?: Profile }) => {
+        const id = request.id;
         const { error: err } = await supabase.from('monthly_requests').update({
             status: 'rejected', reviewed_by: user!.id, reviewed_at: new Date().toISOString(),
             rejection_reason: 'Ditolak oleh admin',
         }).eq('id', id);
         if (err) { setError(err.message); return; }
-        setSuccess('Request rejected'); load();
+        if (request.engineer_id) {
+            void NotificationService.sendToUser(
+                request.engineer_id,
+                'Request Ditolak',
+                'Request Anda ditolak admin. Silakan cek detail request.',
+                { request_id: id, status: 'rejected', type: 'request_progress' },
+            ).catch((e) => console.error('[review.reject] Notification error:', e));
+        }
+        setSuccess('Request rejected');
+        await reviewQuery.refetch();
     };
 
     // Area stock lookup: area -> partId -> total qty of that part across all engineers in area
@@ -262,7 +299,7 @@ export default function ReviewPage() {
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
         >
             {/* ═══ Section 1: Ringkasan ═══ */}
-            <View style={[adminStyles.card, styles.section]}>
+            <View style={[adminStyles.card, styles.section, isCompact && styles.sectionCompact]}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                     <View>
                         <Text style={styles.sectionTitle}>Ringkasan Pending Request</Text>
@@ -270,7 +307,7 @@ export default function ReviewPage() {
                     </View>
                     <Button icon="refresh" mode="text" onPress={onRefresh} textColor={Colors.primary} compact>Refresh</Button>
                 </View>
-                <View style={styles.statsRow}>
+                <View style={[styles.statsRow, isCompact && styles.statsRowStack]}>
                     {[
                         { icon: 'clock-outline', val: pendingCount, label: 'Pending Request', clr: Colors.accent },
                         { icon: 'format-list-bulleted', val: totalItems, label: 'Total Item', clr: Colors.info },
@@ -286,7 +323,7 @@ export default function ReviewPage() {
             </View>
 
             {/* ═══ Section 2: Filter & Urgensi ═══ */}
-            <View style={[adminStyles.card, styles.section]}>
+            <View style={[adminStyles.card, styles.section, isCompact && styles.sectionCompact]}>
                 <Text style={styles.sectionTitle}>Filter & Urgensi</Text>
                 <Text style={[styles.sectionSub, { marginBottom: 14 }]}>Filter berdasarkan Area Group atau tingkat Urgensi (Stok Area).</Text>
                 <View style={[styles.filterRow, !isWide && { flexDirection: 'column' }]}>
@@ -309,7 +346,7 @@ export default function ReviewPage() {
             </View>
 
             {/* ═══ Section 3: Daftar Request ═══ */}
-            <View style={[adminStyles.card, styles.section]}>
+            <View style={[adminStyles.card, styles.section, isCompact && styles.sectionCompact]}>
                 <Text style={styles.sectionTitle}>Daftar Request Pending</Text>
                 <Text style={[styles.sectionSub, { marginBottom: 14 }]}>Menampilkan {filteredReqCount} request sesuai filter.</Text>
 
@@ -323,7 +360,7 @@ export default function ReviewPage() {
                         {filteredGroups.map(group => {
                             const urgCfg = URGENCY_CONFIG[group.urgency];
                             return (
-                                <View key={group.area} style={[styles.areaCard, { borderLeftColor: urgCfg.color }]}>
+                                <View key={group.area} style={[styles.areaCard, isCompact && styles.areaCardCompact, { borderLeftColor: urgCfg.color }]}>
                                     {/* Area Header */}
                                     <View style={styles.areaHeader}>
                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
@@ -348,28 +385,28 @@ export default function ReviewPage() {
                                     </View>
 
                                     {/* 2-Column Grid of Request Cards */}
-                                    <View style={[styles.reqGrid, !isWide && { flexDirection: 'column' }]}>
+                                    <View style={[styles.reqGrid, !isWide && styles.reqGridStack]}>
                                         {group.requests.map(r => {
                                             const items = r.items as RequestItem[];
                                             const reqUrg = getReqUrgency(r);
                                             const reqUrgCfg = URGENCY_CONFIG[reqUrg];
                                             const submittedDate = new Date(r.submitted_at);
                                             const dateStr = submittedDate.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-                                            const timeStr = submittedDate.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' + submittedDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                                            const timeStr = submittedDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
                                             return (
-                                                <View key={r.id} style={[styles.reqCard, isWide && { width: '48.5%' }]}>
+                                                <View key={r.id} style={[styles.reqCard, isWide ? styles.reqCardWide : styles.reqCardFull]}>
                                                     <View style={{ flex: 1 }}>
                                                         {/* Card Header */}
                                                         <View style={styles.reqCardHeader}>
                                                             <View style={{ flex: 1 }}>
                                                                 <Pressable style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }} onPress={() => r.engineer && openEngineerStock(r.engineer)}>
                                                                     <MaterialCommunityIcons name="account-outline" size={16} color={Colors.textSecondary} />
-                                                                    <Text style={[styles.reqName, { textDecorationLine: 'underline', color: Colors.info }]} numberOfLines={1}>
-                                                                        {(r.engineer as any)?.name || 'Unknown'} (ID: {(r.engineer as any)?.employee_id})
+                                                                    <Text style={styles.reqName} numberOfLines={1}>
+                                                                        {(r.engineer as any)?.name || 'Unknown'}
                                                                     </Text>
                                                                 </Pressable>
-                                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                                                                <View style={styles.reqMetaRow}>
                                                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
                                                                         <MaterialCommunityIcons name="calendar-outline" size={12} color={Colors.textMuted} />
                                                                         <Text style={styles.reqDate}>{dateStr}</Text>
@@ -416,11 +453,11 @@ export default function ReviewPage() {
                                                     </View>
                                                     {/* Actions */}
                                                     <View style={styles.reqActions}>
-                                                        <Pressable style={styles.btnReject} onPress={() => reject(r.id)}>
+                                                        <Pressable style={styles.btnReject} onPress={() => reject(r)}>
                                                             <MaterialCommunityIcons name="close-circle-outline" size={16} color={Colors.danger} />
                                                             <Text style={styles.btnRejectText}>Reject</Text>
                                                         </Pressable>
-                                                        <Pressable style={styles.btnApprove} onPress={() => approve(r.id)}>
+                                                        <Pressable style={styles.btnApprove} onPress={() => approve(r)}>
                                                             <MaterialCommunityIcons name="check-circle-outline" size={16} color="#fff" />
                                                             <Text style={styles.btnApproveText}>Approve</Text>
                                                         </Pressable>
@@ -490,10 +527,12 @@ export default function ReviewPage() {
 
 const styles = StyleSheet.create({
     section: { marginHorizontal: 20, marginTop: 16, padding: 16 },
+    sectionCompact: { marginHorizontal: 12, padding: 12 },
     sectionTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: -0.3 },
     sectionSub: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
 
     statsRow: { flexDirection: 'row', gap: 10 },
+    statsRowStack: { flexDirection: 'column' },
     statCard: {
         flex: 1, backgroundColor: Colors.surface, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12,
         borderWidth: 1, gap: 4,
@@ -508,6 +547,7 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.surface, borderRadius: 16, padding: 16,
         borderWidth: 1, borderColor: Colors.border, borderLeftWidth: 4,
     },
+    areaCardCompact: { padding: 12 },
     areaHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     areaName: { fontSize: 17, fontWeight: '800', color: Colors.text, textTransform: 'uppercase' },
     miniTag: {
@@ -521,22 +561,26 @@ const styles = StyleSheet.create({
         flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 16,
         justifyContent: 'space-between',
     },
+    reqGridStack: { flexDirection: 'column' },
 
     // Request card
     reqCard: {
-        flex: 1, minWidth: 280,
+        minWidth: 0,
         backgroundColor: Colors.card, borderRadius: 14, padding: 14,
         borderWidth: 1, borderColor: Colors.border,
         flexDirection: 'column',
     },
+    reqCardWide: { width: '48.5%' },
+    reqCardFull: { width: '100%' },
     reqCardHeader: {
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10,
     },
     reqName: { fontSize: 13, fontWeight: '700', color: Colors.text, flexShrink: 1 },
+    reqMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' },
     reqDate: { fontSize: 10, color: Colors.textMuted, fontWeight: '500' },
     itemCountBadge: {
         paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1,
-        marginLeft: 8,
+        marginLeft: 8, flexShrink: 0,
     },
 
     // Urgency inline badge

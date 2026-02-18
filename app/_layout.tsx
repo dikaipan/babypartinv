@@ -5,9 +5,11 @@ import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator, StyleSheet, Platform, LogBox } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { theme, Colors } from '../src/config/theme';
 import { useAuthStore } from '../src/stores/authStore';
 import { initOneSignal } from '../src/config/onesignal';
+import { getQueryClient } from '../src/config/queryClient';
 
 
 
@@ -15,6 +17,7 @@ export default function RootLayout() {
     const { user, initialized, init, isRecovery } = useAuthStore();
     const segments = useSegments();
     const router = useRouter();
+    const queryClient = getQueryClient();
     const [fontsLoaded, fontError] = useFonts({
         // Serve icon font from public/ to avoid Cloudflare skipping assets under /assets/node_modules/.
         'material-community': '/fonts/MaterialCommunityIcons.ttf',
@@ -136,29 +139,33 @@ export default function RootLayout() {
     if (!initialized || (!fontsLoaded && !fontError)) {
         return (
             <GestureHandlerRootView style={styles.flex}>
-                <PaperProvider theme={theme}>
-                    <View style={styles.loader}>
-                        <ActivityIndicator size="large" color={Colors.primary} />
-                    </View>
-                    <StatusBar style="light" />
-                </PaperProvider>
+                <QueryClientProvider client={queryClient}>
+                    <PaperProvider theme={theme}>
+                        <View style={styles.loader}>
+                            <ActivityIndicator size="large" color={Colors.primary} />
+                        </View>
+                        <StatusBar style="light" />
+                    </PaperProvider>
+                </QueryClientProvider>
             </GestureHandlerRootView>
         );
     }
 
     return (
         <GestureHandlerRootView style={styles.flex}>
-            <PaperProvider theme={theme}>
-                <View style={[styles.flex, isWeb && styles.webContainer]}>
-                    <View style={[
-                        styles.flex,
-                        isWeb && (isAdmin ? styles.webContentAdmin : styles.webContentMobile)
-                    ]}>
-                        <Slot />
+            <QueryClientProvider client={queryClient}>
+                <PaperProvider theme={theme}>
+                    <View style={[styles.flex, isWeb && styles.webContainer]}>
+                        <View style={[
+                            styles.flex,
+                            isWeb && (isAdmin ? styles.webContentAdmin : styles.webContentMobile)
+                        ]}>
+                            <Slot />
+                        </View>
                     </View>
-                </View>
-                <StatusBar style="light" />
-            </PaperProvider>
+                    <StatusBar style="light" />
+                </PaperProvider>
+            </QueryClientProvider>
         </GestureHandlerRootView>
     );
 }

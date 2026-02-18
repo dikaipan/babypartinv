@@ -1,16 +1,58 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, AppState } from 'react-native';
+import { useState, useEffect } from 'react';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions } from 'react-native';
 import { Text, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
 import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
+
+type DashboardStats = {
+    totalUsers: number;
+    admins: number;
+    engineers: number;
+    notifications: number;
+};
+
+type DashboardData = {
+    stats: DashboardStats;
+    kpi: Record<string, unknown> | null;
+};
+
+const EMPTY_STATS: DashboardStats = { totalUsers: 0, admins: 0, engineers: 0, notifications: 0 };
+
+const fetchDashboardData = async (): Promise<DashboardData> => {
+    const [usersRes, notifRes, kpiRes] = await Promise.all([
+        supabase.from('profiles').select('role', { count: 'exact' }),
+        supabase.from('notifications').select('id', { count: 'exact' }).eq('is_read', false),
+        supabase.rpc('admin_kpi_summary'),
+    ]);
+
+    if (usersRes.error) throw usersRes.error;
+    if (notifRes.error) throw notifRes.error;
+    if (kpiRes.error) throw kpiRes.error;
+
+    const profiles = usersRes.data || [];
+    const admins = profiles.filter((p: any) => p.role === 'admin').length;
+    const engineers = profiles.filter((p: any) => p.role === 'engineer').length;
+    const kpi = kpiRes.data ? (Array.isArray(kpiRes.data) ? kpiRes.data[0] : kpiRes.data) : null;
+
+    return {
+        stats: {
+            totalUsers: profiles.length,
+            admins,
+            engineers,
+            notifications: notifRes.count || 0,
+        },
+        kpi,
+    };
+};
 
 export default function DashboardPage() {
     const { user } = useAuthStore();
@@ -18,13 +60,20 @@ export default function DashboardPage() {
     const unreadCount = useUnreadCount();
     const { width } = useWindowDimensions();
     const [refreshing, setRefreshing] = useState(false);
-    const [stats, setStats] = useState({ totalUsers: 0, admins: 0, engineers: 0, notifications: 0 });
-    const [kpi, setKpi] = useState<any>(null);
     const [error, setError] = useState('');
     const isWide = width >= 768;
     const sidebarOpen = useAdminUiStore((state) => state.sidebarOpen);
     const sidebarWidth = isWide ? (sidebarOpen ? ADMIN_SIDEBAR_WIDTH : ADMIN_SIDEBAR_COLLAPSED_WIDTH) : 0;
     const effectiveWidth = width - sidebarWidth;
+
+    const dashboardQuery = useQuery({
+        queryKey: ['admin', 'dashboard'],
+        queryFn: fetchDashboardData,
+        enabled: !!user,
+    });
+
+    const stats = dashboardQuery.data?.stats || EMPTY_STATS;
+    const kpi = dashboardQuery.data?.kpi || null;
 
     const greeting = () => {
         const h = new Date().getHours();
@@ -34,62 +83,24 @@ export default function DashboardPage() {
         return 'Selamat Malam';
     };
 
-    const load = useCallback(async () => {
-        try {
-            const [usersRes, notifRes, kpiRes] = await Promise.all([
-                supabase.from('profiles').select('role', { count: 'exact' }),
-                supabase.from('notifications').select('id', { count: 'exact' }).eq('is_read', false),
-                supabase.rpc('admin_kpi_summary'),
-            ]);
-
-            if (usersRes.error) throw usersRes.error;
-            if (notifRes.error) throw notifRes.error;
-            if (kpiRes.error) throw kpiRes.error;
-
-            const profiles = usersRes.data || [];
-            const adminCount = profiles.filter((p: any) => p.role === 'admin').length;
-            const engineerCount = profiles.filter((p: any) => p.role === 'engineer').length;
-
-            setStats({
-                totalUsers: profiles.length,
-                admins: adminCount,
-                engineers: engineerCount,
-                notifications: notifRes.count || 0,
-            });
-
-            if (kpiRes.data) setKpi(Array.isArray(kpiRes.data) ? kpiRes.data[0] : kpiRes.data);
-            setError('');
-        } catch (err: any) {
-            setError(err?.message || 'Gagal memuat dashboard.');
-        }
-    }, []);
-
-    // Reload when screen comes into focus
-    useFocusEffect(
-        useCallback(() => {
-            load();
-        }, [load])
+    useSupabaseRealtimeRefresh(
+        ['profiles', 'notifications', 'monthly_requests', 'usage_reports'],
+        () => {
+            void dashboardQuery.refetch();
+        },
+        { enabled: !!user },
     );
 
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load);
-
-    // Reload when app comes from background to active (e.g. idle tab wake)
-    useEffect(() => {
-        const subscription = AppState.addEventListener('change', nextAppState => {
-            if (nextAppState === 'active') {
-                load();
-            }
-        });
-        return () => subscription.remove();
-    }, [load]);
+        if (!dashboardQuery.error) return;
+        const message = dashboardQuery.error instanceof Error ? dashboardQuery.error.message : 'Gagal memuat dashboard.';
+        setError(message);
+    }, [dashboardQuery.error]);
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await dashboardQuery.refetch();
         } finally {
             setRefreshing(false);
         }

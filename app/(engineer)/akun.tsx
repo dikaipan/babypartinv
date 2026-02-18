@@ -1,32 +1,76 @@
-import { useState, useEffect } from 'react';
-import { View, StyleSheet, Pressable, ScrollView, Platform } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Text, Avatar, Divider, Button } from 'react-native-paper';
+import { Text } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import { useAuthStore } from '../../src/stores/authStore';
-import { OneSignal } from 'react-native-onesignal';
+import { syncPushIdentity } from '../../src/config/onesignal';
 
 export default function AkunPage() {
     const { user, signOut } = useAuthStore();
     const insets = useSafeAreaInsets();
+    const [syncingPush, setSyncingPush] = useState(false);
+    const [syncMessage, setSyncMessage] = useState('');
     const [oneSignalId, setOneSignalId] = useState<string | null>(null);
+    const [pushToken, setPushToken] = useState<string | null>(null);
 
     useEffect(() => {
-        const checkStatus = async () => {
-            if (Platform.OS !== 'web') {
-                try {
-                    const id = await OneSignal.User.getOnesignalId();
-                    setOneSignalId(id || 'None (Not registered)');
-                } catch (e) {
-                    setOneSignalId('Error fetching ID');
+        let active = true;
+
+        const hydratePushStatus = async () => {
+            if (!user?.id) return;
+            try {
+                const result = await syncPushIdentity(user.id, { requestPermission: false });
+                if (!active) return;
+                if (!result.supported) {
+                    setOneSignalId('Web Browser (Not supported)');
+                    setPushToken('Web Browser (Not supported)');
+                    return;
                 }
-            } else {
-                setOneSignalId('Web Browser (Not supported)');
+
+                setOneSignalId(result.oneSignalId || 'None (Not registered)');
+                setPushToken(result.pushToken || 'No push token');
+            } catch (e) {
+                if (!active) return;
+                setOneSignalId('Failed to auto-sync');
+                setPushToken('Failed to auto-sync');
             }
         };
-        checkStatus();
-    }, []);
+
+        void hydratePushStatus();
+
+        return () => {
+            active = false;
+        };
+    }, [user?.id]);
+
+    const handleSyncPushIdentity = async () => {
+        if (!user?.id || syncingPush) return;
+        setSyncingPush(true);
+        setSyncMessage('');
+        try {
+            const result = await syncPushIdentity(user.id);
+            if (!result.supported) {
+                setOneSignalId('Web Browser (Not supported)');
+                setPushToken('Web Browser (Not supported)');
+                setSyncMessage('Push identity tidak didukung pada web browser.');
+                return;
+            }
+
+            setOneSignalId(result.oneSignalId || 'None (Not registered)');
+            setPushToken(result.pushToken || 'No push token');
+            setSyncMessage(
+                result.permissionGranted
+                    ? 'Push identity tersinkron. Android siap menerima push.'
+                    : 'Sinkron selesai, tapi izin notifikasi belum aktif.',
+            );
+        } catch (e: any) {
+            setSyncMessage(e?.message || 'Gagal sinkron push identity.');
+        } finally {
+            setSyncingPush(false);
+        }
+    };
 
     const initials = (user?.name || '?')
         .split(' ')
@@ -66,16 +110,19 @@ export default function AkunPage() {
 
             {/* Actions */}
             <View style={styles.actions}>
-                <Pressable style={styles.actionCard} onPress={() => { }}>
+                <Pressable style={[styles.actionCard, syncingPush && styles.actionCardDisabled]} onPress={handleSyncPushIdentity} disabled={syncingPush}>
                     <View style={[styles.actionIcon, { backgroundColor: Colors.info + '20' }]}>
                         <MaterialCommunityIcons name="sync" size={22} color={Colors.info} />
                     </View>
                     <View style={{ flex: 1 }}>
                         <Text style={styles.actionTitle}>Sync Push Identity</Text>
-                        <Text style={styles.actionDesc}>Sinkronkan push notification ke akun</Text>
+                        <Text style={styles.actionDesc}>{syncingPush ? 'Menyinkronkan push identity...' : 'Sinkron otomatis aktif. Tekan untuk retry manual.'}</Text>
                     </View>
                     <MaterialCommunityIcons name="chevron-right" size={24} color={Colors.textMuted} />
                 </Pressable>
+                {!!syncMessage && <Text style={styles.syncMessage}>{syncMessage}</Text>}
+                {!!oneSignalId && <Text style={styles.debugText}>OneSignal ID: {oneSignalId}</Text>}
+                {!!pushToken && <Text style={styles.debugText}>Push Token: {pushToken}</Text>}
 
                 <Pressable style={styles.actionCard} onPress={signOut}>
                     <View style={[styles.actionIcon, { backgroundColor: Colors.danger + '20' }]}>
@@ -87,22 +134,6 @@ export default function AkunPage() {
                     </View>
                     <MaterialCommunityIcons name="chevron-right" size={24} color={Colors.textMuted} />
                 </Pressable>
-            </View>
-
-            {/* Diagnostics */}
-            <View style={[styles.actions, { marginTop: 24, paddingBottom: 10 }]}>
-                <Text style={{ color: Colors.textMuted, fontSize: 12, marginBottom: 8, marginLeft: 4 }}>DEBUG INFO</Text>
-                <View style={styles.actionCard}>
-                    <View style={{ flex: 1 }}>
-                        <Text style={styles.actionTitle}>OneSignal ID</Text>
-                        <Text style={[styles.actionDesc, { fontSize: 10 }]} selectable>{oneSignalId || 'Loading...'}</Text>
-                    </View>
-                    <MaterialCommunityIcons
-                        name={oneSignalId && oneSignalId !== 'Not available' ? "check-circle" : "alert-circle"}
-                        size={20}
-                        color={oneSignalId && oneSignalId !== 'Not available' ? Colors.success : Colors.danger}
-                    />
-                </View>
             </View>
 
             {/* Footer */}
@@ -145,9 +176,12 @@ const styles = StyleSheet.create({
         backgroundColor: Colors.card, borderRadius: 12, padding: 16,
         borderWidth: 1, borderColor: Colors.border,
     },
+    actionCardDisabled: { opacity: 0.7 },
     actionIcon: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
     actionTitle: { fontSize: 15, fontWeight: '600', color: Colors.text },
     actionDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+    syncMessage: { marginTop: -4, marginLeft: 4, fontSize: 12, color: Colors.info },
+    debugText: { marginTop: -6, marginLeft: 4, fontSize: 11, color: Colors.textMuted },
     footer: { alignItems: 'center', marginTop: 'auto', paddingVertical: 24 },
     footerText: { fontSize: 14, color: Colors.textMuted },
     footerVersion: { fontSize: 12, color: Colors.textMuted },

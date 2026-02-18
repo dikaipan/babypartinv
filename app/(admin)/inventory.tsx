@@ -1,13 +1,13 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, useWindowDimensions, Pressable, Share, Platform, ScrollView } from 'react-native';
 import { Text, Searchbar, Portal, Modal, TextInput, Button, Chip } from 'react-native-paper';
-import { useFocusEffect } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
 import { InventoryPart } from '../../src/types';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { adminStyles } from '../../src/styles/adminStyles';
 import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 
@@ -24,9 +24,14 @@ const escapeCsvValue = (value: string | number | null | undefined) => {
     return text;
 };
 
+const fetchInventoryParts = async (): Promise<InventoryPart[]> => {
+    const { data, error } = await supabase.from('inventory').select('*').order('part_name');
+    if (error) throw error;
+    return data || [];
+};
+
 export default function InventoryPage() {
     const { width } = useWindowDimensions();
-    const [parts, setParts] = useState<InventoryPart[]>([]);
     const [search, setSearch] = useState('');
     const [refreshing, setRefreshing] = useState(false);
     const [showPartModal, setShowPartModal] = useState(false);
@@ -50,30 +55,30 @@ export default function InventoryPage() {
     const numColumns = isWide ? 2 : 1;
     const cardGap = 16;
     const cardWidth = (effectiveWidth - 40 - (cardGap * (numColumns - 1))) / numColumns;
+    const inventoryQuery = useQuery({
+        queryKey: ['admin', 'inventory'],
+        queryFn: fetchInventoryParts,
+    });
+    const parts = inventoryQuery.data || [];
 
     const sanitizeNumber = (value: string) => value.replace(/[^0-9]/g, '');
+    useSupabaseRealtimeRefresh(
+        ['inventory'],
+        () => {
+            void inventoryQuery.refetch();
+        },
+    );
 
-    const load = useCallback(async () => {
-        const { data, error: loadError } = await supabase.from('inventory').select('*').order('part_name');
-        if (loadError) {
-            setError(loadError.message);
-            return;
-        }
-        setParts(data || []);
-    }, []);
-
-    useFocusEffect(useCallback(() => {
-        load();
-    }, [load]));
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load);
+        if (!inventoryQuery.error) return;
+        const message = inventoryQuery.error instanceof Error ? inventoryQuery.error.message : 'Gagal memuat inventory.';
+        setError(message);
+    }, [inventoryQuery.error]);
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await inventoryQuery.refetch();
         } finally {
             setRefreshing(false);
         }
@@ -244,7 +249,7 @@ export default function InventoryPage() {
 
         closePartModal();
         setSuccess(editPart ? 'Detail part berhasil diperbarui.' : 'Part baru berhasil ditambahkan.');
-        await load();
+        await inventoryQuery.refetch();
     };
 
     const deletePart = async (id: string) => {
@@ -255,7 +260,7 @@ export default function InventoryPage() {
         }
         closePartModal();
         setSuccess('Part dihapus dari inventory.');
-        await load();
+        await inventoryQuery.refetch();
     };
 
     const openStockEditor = (part: InventoryPart, mode: StockEditorMode) => {
@@ -311,7 +316,7 @@ export default function InventoryPage() {
             }
 
             closeStockEditor();
-            await load();
+            await inventoryQuery.refetch();
             if (stockEditorMode === 'add') {
                 setSuccess(`Stok ${stockEditorPart.part_name} ditambah ${parsedValue} pcs.`);
             } else {

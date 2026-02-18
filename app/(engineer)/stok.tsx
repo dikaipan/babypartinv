@@ -1,16 +1,17 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { View, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Modal as RNModal, Platform } from 'react-native';
 import { Text, IconButton } from 'react-native-paper';
-import { useFocusEffect, useNavigation } from 'expo-router';
+import { useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import WebPullToRefreshBanner from '../../src/components/WebPullToRefreshBanner';
 import NotificationBell from '../../src/components/NotificationBell';
 import { useUnreadCount } from '../../src/hooks/useUnreadCount';
-import { useWebAutoRefresh } from '../../src/hooks/useWebAutoRefresh';
 import { useWebPullToRefresh } from '../../src/hooks/useWebPullToRefresh';
+import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
 import { useAuthStore } from '../../src/stores/authStore';
 import { supabase } from '../../src/config/supabase';
 import { EngineerStock, InventoryPart } from '../../src/types';
@@ -22,18 +23,35 @@ interface StockItem extends EngineerStock {
 type StockFilter = 'all' | 'low' | 'available';
 type StockEditorMode = 'adjust' | 'min';
 
+type EngineerStockData = {
+    stockRows: EngineerStock[];
+    partsRows: InventoryPart[];
+};
+
+const fetchEngineerStockData = async (engineerId: string): Promise<EngineerStockData> => {
+    const [stockRes, partsRes] = await Promise.all([
+        supabase.from('engineer_stock').select('*').eq('engineer_id', engineerId),
+        supabase.from('inventory').select('*'),
+    ]);
+
+    if (stockRes.error) throw stockRes.error;
+    if (partsRes.error) throw partsRes.error;
+
+    return {
+        stockRows: stockRes.data || [],
+        partsRows: partsRes.data || [],
+    };
+};
+
 export default function StokPage() {
     const { user } = useAuthStore();
     const insets = useSafeAreaInsets();
     const navigation = useNavigation<any>();
     const unreadCount = useUnreadCount();
 
-    const [stocks, setStocks] = useState<StockItem[]>([]);
-    const [parts, setParts] = useState<Record<string, InventoryPart>>({});
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState<StockFilter>('all');
     const [refreshing, setRefreshing] = useState(false);
-    const [lastSync, setLastSync] = useState('');
 
     const [selectedStock, setSelectedStock] = useState<StockItem | null>(null);
     const [sheetMode, setSheetMode] = useState<StockEditorMode>('adjust');
@@ -68,54 +86,40 @@ export default function StokPage() {
         };
     }, [editorOpen, navigation, visibleTabStyle]);
 
-    const getMinStock = useCallback((item: StockItem) => {
-        return item.min_stock ?? parts[item.part_id]?.min_stock ?? 5;
-    }, [parts]);
+    const stockQuery = useQuery({
+        queryKey: ['engineer', 'stock', user?.id],
+        queryFn: () => fetchEngineerStockData(user!.id),
+        enabled: !!user?.id,
+    });
 
-    const load = useCallback(async () => {
-        if (!user) return;
-
-        const [stockRes, partsRes] = await Promise.all([
-            supabase.from('engineer_stock').select('*').eq('engineer_id', user.id),
-            supabase.from('inventory').select('*'),
-        ]);
-
-        if (stockRes.error) {
-            setError(stockRes.error.message);
-            return;
-        }
-
-        if (partsRes.error) {
-            setError(partsRes.error.message);
-            return;
-        }
+    const { stocks, parts, lastSync } = useMemo(() => {
+        const partsRows = stockQuery.data?.partsRows || [];
+        const stockRows = stockQuery.data?.stockRows || [];
 
         const partsMap: Record<string, InventoryPart> = {};
-        (partsRes.data || []).forEach((part) => {
+        for (const part of partsRows) {
             partsMap[part.id] = part;
+        }
+
+        const stockMap = new Map(stockRows.map((row) => [row.part_id, row]));
+        const items: StockItem[] = partsRows.map((part) => {
+            const existing = stockMap.get(part.id);
+            return {
+                engineer_id: user?.id || '',
+                part_id: part.id,
+                quantity: existing?.quantity ?? 0,
+                min_stock: existing?.min_stock ?? null,
+                last_sync: existing?.last_sync ?? null,
+                created_at: existing?.created_at,
+                updated_at: existing?.updated_at,
+                part_name: part.part_name || part.id,
+            };
         });
-        setParts(partsMap);
 
-        const stockMap = new Map((stockRes.data || []).map((row) => [row.part_id, row]));
-        const items = (partsRes.data || [])
-            .map((part) => {
-                const existing = stockMap.get(part.id);
-                return {
-                    engineer_id: user.id,
-                    part_id: part.id,
-                    quantity: existing?.quantity ?? 0,
-                    min_stock: existing?.min_stock ?? null,
-                    last_sync: existing?.last_sync ?? null,
-                    created_at: existing?.created_at,
-                    updated_at: existing?.updated_at,
-                    part_name: part.part_name || part.id,
-                } as StockItem;
-            });
-
-        for (const extra of stockRes.data || []) {
+        for (const extra of stockRows) {
             if (partsMap[extra.part_id]) continue;
             items.push({
-                engineer_id: user.id,
+                engineer_id: user?.id || '',
                 part_id: extra.part_id,
                 quantity: extra.quantity ?? 0,
                 min_stock: extra.min_stock ?? null,
@@ -127,7 +131,6 @@ export default function StokPage() {
         }
 
         items.sort((a, b) => (a.part_name || '').localeCompare(b.part_name || ''));
-        setStocks(items);
 
         const latestSyncMs = items.reduce((latest, item) => {
             if (!item.last_sync) return latest;
@@ -136,31 +139,40 @@ export default function StokPage() {
             return timestamp > latest ? timestamp : latest;
         }, 0);
 
-        setLastSync(
-            latestSyncMs
-                ? new Date(latestSyncMs).toLocaleString('id-ID', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                })
-                : ''
-        );
-    }, [user]);
+        const formattedSync = latestSyncMs
+            ? new Date(latestSyncMs).toLocaleString('id-ID', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+            })
+            : '';
 
-    useFocusEffect(useCallback(() => {
-        load();
-    }, [load]));
+        return { stocks: items, parts: partsMap, lastSync: formattedSync };
+    }, [stockQuery.data?.partsRows, stockQuery.data?.stockRows, user?.id]);
+
     useEffect(() => {
-        load();
-    }, [load]);
-    useWebAutoRefresh(load, { enabled: !!user });
+        if (!stockQuery.error) return;
+        const message = stockQuery.error instanceof Error ? stockQuery.error.message : 'Gagal memuat stok.';
+        setError(message);
+    }, [stockQuery.error]);
+
+    const getMinStock = useCallback((item: StockItem) => {
+        return item.min_stock ?? parts[item.part_id]?.min_stock ?? 5;
+    }, [parts]);
+    useSupabaseRealtimeRefresh(
+        ['engineer_stock', 'inventory'],
+        () => {
+            void stockQuery.refetch();
+        },
+        { enabled: !!user?.id },
+    );
 
     const onRefresh = async () => {
         setRefreshing(true);
         try {
-            await load();
+            await stockQuery.refetch();
         } finally {
             setRefreshing(false);
         }
@@ -271,7 +283,7 @@ export default function StokPage() {
             if (insertError) throw insertError;
 
             closeEditor();
-            await load();
+            await stockQuery.refetch();
             setSuccess('Koreksi stok berhasil disimpan.');
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Gagal menyimpan koreksi stok.';
@@ -314,7 +326,7 @@ export default function StokPage() {
             if (updateError) throw updateError;
 
             closeEditor();
-            await load();
+            await stockQuery.refetch();
             setSuccess('Minimum stok berhasil diperbarui.');
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Gagal memperbarui minimum stok.';

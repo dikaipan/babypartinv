@@ -74,6 +74,30 @@ export default function AdminLayout() {
                                     color={Colors.textSecondary}
                                 />
                             </Pressable>
+                            <ScrollView
+                                style={styles.collapsedMenu}
+                                contentContainerStyle={styles.collapsedMenuContent}
+                                showsVerticalScrollIndicator={false}
+                            >
+                                {menuItems.map(item => (
+                                    <Pressable
+                                        key={item.key}
+                                        style={[styles.collapsedMenuItem, activeKey === item.key && styles.collapsedMenuItemActive]}
+                                        onPress={() => navigate(item.path)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={item.label}
+                                    >
+                                        <MaterialCommunityIcons
+                                            name={item.icon}
+                                            size={22}
+                                            color={activeKey === item.key ? Colors.primary : Colors.textMuted}
+                                        />
+                                    </Pressable>
+                                ))}
+                            </ScrollView>
+                            <View style={styles.collapsedProfile}>
+                                <Text style={styles.collapsedProfileText}>{initials}</Text>
+                            </View>
                         </View>
                     ) : (
                         <>
@@ -175,6 +199,45 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         paddingTop: 6,
+        paddingHorizontal: 8,
+    },
+    collapsedMenu: {
+        flex: 1,
+        width: '100%',
+        marginTop: 18,
+    },
+    collapsedMenuContent: {
+        alignItems: 'center',
+        paddingBottom: 12,
+    },
+    collapsedMenuItem: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 8,
+    },
+    collapsedMenuItemActive: {
+        backgroundColor: Colors.primary + '15',
+        borderWidth: 1,
+        borderColor: Colors.primary + '35',
+    },
+    collapsedProfile: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: Colors.primary + '20',
+        borderWidth: 1,
+        borderColor: Colors.primary + '35',
+        marginBottom: 16,
+    },
+    collapsedProfileText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: Colors.primary,
     },
     brand: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 20, marginBottom: 10 },
     brandIcon: {

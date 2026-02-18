@@ -271,7 +271,27 @@ export const logoutPushIdentity = async () => {
 };
 
 /* ─── Client-side Notification Sending (Not recommended for public apps, okay for internal admin) ─── */
-const PUSH_GATEWAY_URL = process.env.EXPO_PUBLIC_PUSH_GATEWAY_URL?.trim() || '';
+const normalizePushGatewayUrl = (rawUrl: string): string => {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return '';
+
+    try {
+        const parsed = new URL(trimmed);
+        const plainSupabaseHost = parsed.hostname.match(/^([a-z0-9-]+)\.supabase\.co$/i);
+        const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+
+        if (plainSupabaseHost && normalizedPath === '/push-gateway') {
+            parsed.hostname = `${plainSupabaseHost[1]}.functions.supabase.co`;
+            return parsed.toString().replace(/\/$/, '');
+        }
+    } catch {
+        // Keep original value for existing validation path.
+    }
+
+    return trimmed;
+};
+
+const PUSH_GATEWAY_URL = normalizePushGatewayUrl(process.env.EXPO_PUBLIC_PUSH_GATEWAY_URL || '');
 
 interface NotificationPayload {
     title: string;

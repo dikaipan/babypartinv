@@ -53,6 +53,8 @@ export default function UsersPage() {
     });
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
     const [savingUser, setSavingUser] = useState(false);
     const [sendingReset, setSendingReset] = useState(false);
@@ -97,6 +99,8 @@ export default function UsersPage() {
         setUserForm(mapProfileToForm(profile));
         setNewPassword('');
         setConfirmPassword('');
+        setShowNewPassword(false);
+        setShowConfirmPassword(false);
         setShowDeleteConfirm(false);
         setShowManageModal(true);
     };
@@ -107,6 +111,8 @@ export default function UsersPage() {
         setShowDeleteConfirm(false);
         setNewPassword('');
         setConfirmPassword('');
+        setShowNewPassword(false);
+        setShowConfirmPassword(false);
     };
 
     const saveUser = async () => {
@@ -491,7 +497,14 @@ export default function UsersPage() {
                                     label="Password Baru"
                                     value={newPassword}
                                     onChangeText={setNewPassword}
-                                    secureTextEntry
+                                    secureTextEntry={!showNewPassword}
+                                    right={
+                                        <TextInput.Icon
+                                            icon={showNewPassword ? 'eye-off' : 'eye'}
+                                            onPress={() => setShowNewPassword((prev) => !prev)}
+                                            forceTextInputFocus={false}
+                                        />
+                                    }
                                     mode="outlined"
                                     style={styles.input}
                                 />
@@ -499,7 +512,14 @@ export default function UsersPage() {
                                     label="Konfirmasi Password Baru"
                                     value={confirmPassword}
                                     onChangeText={setConfirmPassword}
-                                    secureTextEntry
+                                    secureTextEntry={!showConfirmPassword}
+                                    right={
+                                        <TextInput.Icon
+                                            icon={showConfirmPassword ? 'eye-off' : 'eye'}
+                                            onPress={() => setShowConfirmPassword((prev) => !prev)}
+                                            forceTextInputFocus={false}
+                                        />
+                                    }
                                     mode="outlined"
                                     style={styles.input}
                                 />

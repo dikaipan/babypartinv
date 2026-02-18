@@ -151,6 +151,20 @@ type ReportsData = {
     fetchedAt: string;
 };
 
+type AdjustmentRow = {
+    id: string;
+    engineer_id?: string | null;
+    engineer_name?: string | null;
+    part_id: string;
+    part_name: string;
+    previous_quantity: number;
+    new_quantity: number;
+    delta: number;
+    reason?: string | null;
+    notes?: string | null;
+    timestamp: string;
+};
+
 const fetchReportsData = async (): Promise<ReportsData> => {
     const now = Date.now();
     const usageCutoffIso = new Date(now - (MONITOR_USAGE_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
@@ -162,7 +176,7 @@ const fetchReportsData = async (): Promise<ReportsData> => {
         supabase.from('inventory').select('id, part_name, total_stock, min_stock'),
         supabase
             .from('stock_adjustments')
-            .select('id, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp, engineer:profiles(name)')
+            .select('id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp')
             .order('timestamp', { ascending: false })
             .limit(50),
         supabase
@@ -199,12 +213,17 @@ const fetchReportsData = async (): Promise<ReportsData> => {
         date: row.date || null,
         items: row.items,
     }));
+    const profilesById = new Map((profilesRes.data || []).map((profile) => [profile.id, profile.name]));
+    const adjustments = ((adjRes.data || []) as AdjustmentRow[]).map((row) => ({
+        ...row,
+        engineer_name: row.engineer_name || (row.engineer_id ? profilesById.get(row.engineer_id) : null) || null,
+    }));
 
     return {
         profiles: profilesRes.data || [],
         engineerStocks: stockRes.data || [],
         parts: partsRes.data || [],
-        adjustments: adjRes.data || [],
+        adjustments,
         deliveries: delRes.data || [],
         monitorRequests: (openReqRes.data || []) as MonitorRequestRow[],
         usageReports,
@@ -937,7 +956,7 @@ export default function ReportsPage() {
                     </View>
                     <View>
                         <Text style={styles.logTitle}>{log.part_name} ({log.part_id})</Text>
-                        <Text style={styles.logTime}>{new Date(log.timestamp).toLocaleDateString()} • {(log.engineer?.name || 'Admin')}</Text>
+                        <Text style={styles.logTime}>{new Date(log.timestamp).toLocaleDateString()} • {(log.engineer_name || log.engineer?.name || 'Admin')}</Text>
                     </View>
                 </View>
                 <Text style={{ fontWeight: '700', fontSize: 16, color: log.delta >= 0 ? Colors.success : Colors.danger }}>

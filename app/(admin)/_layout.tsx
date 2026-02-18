@@ -42,7 +42,7 @@ export default function AdminLayout() {
                 <View style={[styles.sidebar, !isWide && styles.sidebarOverlay]}>
                     <View style={styles.brand}>
                         <View style={styles.brandIcon}>
-                            <Image source={require('../../assets/logo.png')} style={styles.brandIconImage} resizeMode="contain" />
+                            <Image source={require('../../assets/logo.png')} style={styles.brandIconImage} resizeMode="cover" />
                         </View>
                         <View>
                             <Text style={styles.brandTitle}>BabyPart</Text>
@@ -109,11 +109,11 @@ const styles = StyleSheet.create({
     },
     brand: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 20, marginBottom: 10 },
     brandIcon: {
-        width: 44, height: 44, borderRadius: 12, backgroundColor: Colors.primary,
+        width: 44, height: 44, borderRadius: 12, backgroundColor: 'transparent',
         justifyContent: 'center', alignItems: 'center', overflow: 'hidden',
-        shadowColor: Colors.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
+        shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4,
     },
-    brandIconImage: { width: '100%', height: '100%' },
+    brandIconImage: { width: '100%', height: '100%', transform: [{ scale: 1.62 }] },
     brandTitle: { fontSize: 18, fontWeight: '800', color: Colors.text, letterSpacing: 0.5 },
     brandSub: { fontSize: 11, color: Colors.textSecondary, fontWeight: '500' },
     menu: { flex: 1, paddingHorizontal: 12 },

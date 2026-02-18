@@ -308,6 +308,28 @@ export default function ApprovedPage() {
         setDeliveringId(id);
 
         const decrementedRows: { partId: string; previousQty: number; nextQty: number }[] = [];
+        const rollbackInventory = async () => {
+            let rollbackFailed = false;
+            for (const row of decrementedRows) {
+                const { data: rollbackRow, error: rollbackError } = await supabase
+                    .from('inventory')
+                    .update({
+                        total_stock: row.previousQty,
+                        last_updated: new Date().toISOString(),
+                    })
+                    .eq('id', row.partId)
+                    .eq('total_stock', row.nextQty)
+                    .select('id')
+                    .maybeSingle();
+
+                if (rollbackError || !rollbackRow) rollbackFailed = true;
+            }
+
+            if (!rollbackFailed) {
+                decrementedRows.length = 0;
+            }
+            return !rollbackFailed;
+        };
 
         try {
             const { data: requestRow, error: requestError } = await supabase
@@ -422,23 +444,8 @@ export default function ApprovedPage() {
 
             if (deliveryError) throw deliveryError;
             if (!deliveredRow || deliveredRow.status !== 'delivered') {
-                let rollbackFailed = false;
-                for (const row of decrementedRows) {
-                    const { data: rollbackRow, error: rollbackError } = await supabase
-                        .from('inventory')
-                        .update({
-                            total_stock: row.previousQty,
-                            last_updated: new Date().toISOString(),
-                        })
-                        .eq('id', row.partId)
-                        .eq('total_stock', row.nextQty)
-                        .select('id')
-                        .maybeSingle();
-
-                    if (rollbackError || !rollbackRow) rollbackFailed = true;
-                }
-
-                if (rollbackFailed) {
+                const rollbackSuccess = await rollbackInventory();
+                if (!rollbackSuccess) {
                     throw new Error('Pengiriman gagal dan rollback stok tidak lengkap. Cek inventory admin.');
                 }
                 throw new Error('Pengiriman gagal disimpan. Stok inventory sudah dikembalikan.');
@@ -464,6 +471,13 @@ export default function ApprovedPage() {
             setSuccess('Pengiriman berhasil. Inventory admin diperbarui.');
             await approvedQuery.refetch();
         } catch (err) {
+            if (decrementedRows.length > 0) {
+                const rollbackSuccess = await rollbackInventory();
+                if (!rollbackSuccess) {
+                    setError('Pengiriman gagal dan rollback stok tidak lengkap. Cek inventory admin.');
+                    return;
+                }
+            }
             const message = err instanceof Error ? err.message : 'Gagal memproses pengiriman.';
             setError(message);
         } finally {

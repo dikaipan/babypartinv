@@ -1,5 +1,6 @@
 import { LogLevel, OneSignal } from 'react-native-onesignal';
 import { Platform } from 'react-native';
+import { supabase } from './supabase';
 
 // Replace with your OneSignal App ID
 const ONESIGNAL_APP_ID = 'e71e2327-736b-4a58-a55f-c3d4f7358018';
@@ -52,13 +53,19 @@ const isSdkAlreadyInitializedError = (error: unknown) => {
 const getWebPushSubscription = (sdk: OneSignalWebSdk): OneSignalWebPushSubscription | undefined =>
     sdk.User?.PushSubscription || sdk.User?.pushSubscription;
 
-const isWebPushRuntimeSupported = (): boolean => {
-    if (Platform.OS !== 'web') return false;
-    if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
-    if (!window.isSecureContext) return false;
-    if (!('Notification' in window)) return false;
-    if (!('serviceWorker' in navigator)) return false;
-    return true;
+const getWebPushUnsupportedReason = (): string | null => {
+    if (Platform.OS !== 'web') return 'Web push hanya tersedia di platform web.';
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return 'Runtime browser tidak tersedia.';
+    if (!('Notification' in window)) return 'Browser tidak mendukung Notification API.';
+    if (!('serviceWorker' in navigator)) return 'Browser tidak mendukung Service Worker.';
+
+    const host = window.location?.hostname || '';
+    const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+    if (!window.isSecureContext && !isLocalhost) {
+        return 'Push web butuh HTTPS (kecuali localhost).';
+    }
+
+    return null;
 };
 
 const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
@@ -115,7 +122,11 @@ const ensureOneSignalWebSdk = async (): Promise<OneSignalWebSdk> => {
 
 export const initOneSignal = () => {
     if (Platform.OS === 'web') {
-        if (!isWebPushRuntimeSupported()) return;
+        const unsupportedReason = getWebPushUnsupportedReason();
+        if (unsupportedReason) {
+            console.warn('[OneSignal.web] Init skipped:', unsupportedReason);
+            return;
+        }
         void ensureOneSignalWebSdk().catch((error) => {
             console.warn('[OneSignal.web] Init failed:', error);
         });
@@ -156,7 +167,8 @@ export async function syncPushIdentity(
     const shouldRequestPermission = options?.requestPermission ?? true;
 
     if (Platform.OS === 'web') {
-        if (!isWebPushRuntimeSupported()) {
+        const unsupportedReason = getWebPushUnsupportedReason();
+        if (unsupportedReason) {
             return {
                 supported: false,
                 platform: 'web',
@@ -164,7 +176,7 @@ export async function syncPushIdentity(
                 pushToken: null,
                 optedIn: false,
                 permissionGranted: false,
-                reason: 'Web push tidak didukung di environment ini.',
+                reason: unsupportedReason,
             };
         }
 
@@ -259,82 +271,85 @@ export const logoutPushIdentity = async () => {
 };
 
 /* ─── Client-side Notification Sending (Not recommended for public apps, okay for internal admin) ─── */
-const ONESIGNAL_REST_API_KEY = 'os_v2_app_44pcgj3tnnffrjk7ypkponmaddojnejae2neejnhpjymisc4252ylnzkx2gmmun6n7xskoegtuwg6pwhmf3hnhd2vrfng2fostbd76y';
-const ONESIGNAL_API_URL = 'https://api.onesignal.com/notifications?c=push';
+const PUSH_GATEWAY_URL = process.env.EXPO_PUBLIC_PUSH_GATEWAY_URL?.trim() || '';
 
 interface NotificationPayload {
-    headings: { en: string };
-    contents: { en: string };
+    title: string;
+    body: string;
+    appId: string;
     include_player_ids?: string[];
-    include_external_user_ids?: string[]; // Deprecated but might simpler if using external IDs
-    include_aliases?: { external_id: string[] }; // New way for external IDs
+    include_aliases?: { external_id: string[] };
     target_channel?: 'push';
     included_segments?: string[];
-    data?: any;
-    app_id: string;
+    data?: unknown;
 }
+
+const parseJsonSafe = (text: string) => {
+    if (!text) return {};
+    try {
+        return JSON.parse(text);
+    } catch {
+        return { raw: text };
+    }
+};
 
 export const sendNotification = async (
     title: string,
     body: string,
     target: { externalIds?: string[]; playerIds?: string[]; segments?: string[] },
-    data?: any
+    data?: unknown
 ) => {
+    if (!PUSH_GATEWAY_URL) {
+        throw new Error('Push gateway belum dikonfigurasi. Set EXPO_PUBLIC_PUSH_GATEWAY_URL terlebih dulu.');
+    }
+
     const payload: NotificationPayload = {
-        app_id: ONESIGNAL_APP_ID,
-        headings: { en: title },
-        contents: { en: body },
-        data: data,
+        title,
+        body,
+        appId: ONESIGNAL_APP_ID,
+        data,
     };
 
-    // Target specific users by External ID (Supabase User ID)
     if (target.externalIds && target.externalIds.length > 0) {
-        // OneSignal v5+ recommends using `include_aliases` for external_id
         payload.include_aliases = { external_id: target.externalIds };
         payload.target_channel = 'push';
-    }
-    // Target specific devices
-    else if (target.playerIds && target.playerIds.length > 0) {
+    } else if (target.playerIds && target.playerIds.length > 0) {
         payload.include_player_ids = target.playerIds;
-    }
-    // Target segments (Active Users, etc.)
-    else if (target.segments && target.segments.length > 0) {
+    } else if (target.segments && target.segments.length > 0) {
         payload.included_segments = target.segments;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    const { data: { session } } = await supabase.auth.getSession();
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json; charset=utf-8',
+    };
+    if (session?.access_token) {
+        headers.Authorization = `Bearer ${session.access_token}`;
+    }
 
-    console.log('[OneSignal] Sending Notification Payload:', JSON.stringify(payload, null, 2));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
-        const response = await fetch(ONESIGNAL_API_URL, {
+        const response = await fetch(PUSH_GATEWAY_URL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json; charset=utf-8',
-                'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`,
-            },
+            headers,
             body: JSON.stringify(payload),
             signal: controller.signal,
         });
-        clearTimeout(timeoutId);
 
         const text = await response.text();
-        let json: any = {};
-        try {
-            json = text ? JSON.parse(text) : {};
-        } catch {
-            json = { raw: text };
-        }
+        const json = parseJsonSafe(text);
 
         if (!response.ok) {
-            throw new Error(`[OneSignal ${response.status}] ${JSON.stringify(json)}`);
+            throw new Error(`[PushGateway ${response.status}] ${JSON.stringify(json)}`);
         }
 
-        console.log('OneSignal Response:', json);
         return json;
     } catch (error) {
-        console.error('OneSignal Send Error:', error);
+        console.error('Push gateway error:', error);
         throw error;
+    } finally {
+        clearTimeout(timeoutId);
     }
 };

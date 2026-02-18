@@ -1,13 +1,11 @@
 import { useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView } from 'react-native';
 import { Text, TextInput, Button, RadioButton } from 'react-native-paper';
 import { Colors } from '../../src/config/theme';
 import { adminStyles } from '../../src/styles/adminStyles';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
-
-const ONESIGNAL_APP_ID = 'e71e2327-736b-4a58-a55f-c3d4f7358018';
-const ONESIGNAL_REST_API_KEY = 'os_v2_app_44pcgj3tnnffrjk7ypkponmaddojnejae2neejnhpjymisc4252ylnzkx2gmmun6n7xskoegtuwg6pwhmf3hnhd2vrfng2fostbd76y';
+import { NotificationService } from '../../src/services/NotificationService';
 
 export default function BroadcastPage() {
     const [title, setTitle] = useState('');
@@ -18,7 +16,10 @@ export default function BroadcastPage() {
     const [error, setError] = useState('');
 
     const handleSend = async () => {
-        if (!title.trim() || !body.trim()) {
+        const trimmedTitle = title.trim();
+        const trimmedBody = body.trim();
+
+        if (!trimmedTitle || !trimmedBody) {
             setError('Judul dan Pesan wajib diisi');
             return;
         }
@@ -28,52 +29,30 @@ export default function BroadcastPage() {
         setSuccess('');
 
         try {
-            // Step 1: Get users
-            let users: { id: string }[] = [];
-            if (target === 'all') {
-                const { data, error: e } = await supabase.from('profiles').select('id');
-                if (e) throw new Error('Fetch users: ' + e.message);
-                users = data || [];
-            } else {
-                const { data, error: e } = await supabase.from('profiles').select('id').eq('role', target);
-                if (e) throw new Error('Fetch users: ' + e.message);
-                users = data || [];
+            let countQuery = supabase.from('profiles').select('id', { head: true, count: 'exact' });
+            if (target !== 'all') {
+                countQuery = countQuery.eq('role', target);
             }
+            const { count, error: countError } = await countQuery;
+            if (countError) throw new Error('Fetch users: ' + countError.message);
 
-            if (users.length === 0) {
+            const recipientCount = count || 0;
+            if (recipientCount === 0) {
                 setError('Tidak ada user ditemukan');
                 return;
             }
 
-            // Step 2: Insert into notifications table (DB in-app notifications)
-            const rows = users.map(u => ({
-                user_id: u.id,
-                title: title.trim(),
-                body: body.trim(),
-                data: {},
-                is_read: false,
-                type: 'broadcast',
-            }));
-
-            const { error: insertErr } = await supabase.from('notifications').insert(rows);
-            if (insertErr) throw new Error('Insert: ' + insertErr.message);
-
-            // Step 3: Fire OneSignal push completely in background (never blocks UI)
-            const userIds = users.map(u => u.id);
-            const t = title.trim();
-            const b = body.trim();
-            setTimeout(() => {
-                fireOneSignalPush(t, b, target, userIds)
-                    .then(r => console.log('[Push] Result:', JSON.stringify(r)))
-                    .catch(e => console.warn('[Push] Failed:', e.message));
-            }, 0);
-
-            setSuccess(`Broadcast terkirim ke ${users.length} user! (Push dikirim di background)`);
+            const pushResult = await NotificationService.broadcast(trimmedTitle, trimmedBody, target);
+            if (pushResult) {
+                setSuccess(`Broadcast diproses untuk ${recipientCount} user.`);
+            } else {
+                setSuccess(`Notifikasi in-app terkirim ke ${recipientCount} user, push belum terkirim (cek push gateway).`);
+            }
             setTitle('');
             setBody('');
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error('[Broadcast Error]', e);
-            setError(e.message || 'Gagal mengirim');
+            setError(e instanceof Error ? e.message : 'Gagal mengirim');
         } finally {
             setSending(false);
         }
@@ -87,7 +66,7 @@ export default function BroadcastPage() {
 
                 <View style={styles.formGroup}>
                     <Text style={styles.label}>Target Penerima</Text>
-                    <RadioButton.Group onValueChange={val => setTarget(val as any)} value={target}>
+                    <RadioButton.Group onValueChange={(val) => setTarget(val as 'all' | 'admin' | 'engineer')} value={target}>
                         <View style={styles.radioRow}>
                             <View style={styles.radioItem}>
                                 <RadioButton value="all" color={Colors.primary} />
@@ -147,55 +126,6 @@ export default function BroadcastPage() {
             <AppSnackbar visible={!!success} onDismiss={() => setSuccess('')} style={{ backgroundColor: Colors.success }}>{success}</AppSnackbar>
         </ScrollView>
     );
-}
-
-/**
- * Push notification via OneSignal REST API with 10s timeout.
- */
-async function fireOneSignalPush(title: string, body: string, target: string, userIds: string[]): Promise<any> {
-    const payload: any = {
-        app_id: ONESIGNAL_APP_ID,
-        headings: { en: title },
-        contents: { en: body },
-    };
-
-    if (target === 'all') {
-        payload.included_segments = ['Active Users', 'Subscribed Users'];
-    } else {
-        payload.include_aliases = { external_id: userIds };
-        payload.target_channel = 'push';
-    }
-
-    console.log('[Push] Payload:', JSON.stringify(payload, null, 2));
-
-    const timeout = new Promise<any>((_, reject) =>
-        setTimeout(() => reject(new Error('Push timeout (10s)')), 10000)
-    );
-
-    const request = fetch('https://api.onesignal.com/notifications?c=push', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json; charset=utf-8',
-            'Authorization': `Key ${ONESIGNAL_REST_API_KEY}`,
-        },
-        body: JSON.stringify(payload),
-    }).then(async (r) => {
-        const text = await r.text();
-        let json: any = {};
-        try {
-            json = text ? JSON.parse(text) : {};
-        } catch {
-            json = { raw: text };
-        }
-        if (!r.ok) {
-            throw new Error(`[OneSignal ${r.status}] ${JSON.stringify(json)}`);
-        }
-        return json;
-    });
-
-    const result = await Promise.race([request, timeout]);
-    console.log('[Push] OneSignal result:', result);
-    return result;
 }
 
 const styles = StyleSheet.create({

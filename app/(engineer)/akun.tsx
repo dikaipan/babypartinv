@@ -24,8 +24,9 @@ export default function AkunPage() {
                 const result = await syncPushIdentity(user.id, { requestPermission: false });
                 if (!active) return;
                 if (!result.supported) {
-                    setOneSignalId('Push service not available');
-                    setPushToken('Push service not available');
+                    setOneSignalId(null);
+                    setPushToken(null);
+                    if (result.reason) setSyncMessage(result.reason);
                     return;
                 }
 
@@ -52,9 +53,9 @@ export default function AkunPage() {
         try {
             const result = await syncPushIdentity(user.id);
             if (!result.supported) {
-                setOneSignalId('Push service not available');
-                setPushToken('Push service not available');
-                setSyncMessage('Push identity tidak tersedia di device/browser ini.');
+                setOneSignalId(null);
+                setPushToken(null);
+                setSyncMessage(result.reason || 'Push identity tidak tersedia di device/browser ini.');
                 return;
             }
 

@@ -172,11 +172,29 @@ export default function ReviewPage() {
     };
 
     const approve = async (request: MonthlyRequest & { engineer?: Profile }) => {
+        if (!user?.id) {
+            setError('Session admin tidak valid.');
+            return;
+        }
         const id = request.id;
-        const { error: err } = await supabase.from('monthly_requests').update({
-            status: 'approved', reviewed_by: user!.id, reviewed_at: new Date().toISOString(),
-        }).eq('id', id);
+        const reviewedAt = new Date().toISOString();
+        const { data: updatedRow, error: err } = await supabase
+            .from('monthly_requests')
+            .update({
+                status: 'approved',
+                reviewed_by: user.id,
+                reviewed_at: reviewedAt,
+            })
+            .eq('id', id)
+            .eq('status', 'pending')
+            .select('id')
+            .maybeSingle();
         if (err) { setError(err.message); return; }
+        if (!updatedRow) {
+            setError('Request sudah diproses admin lain. Muat ulang data.');
+            await reviewQuery.refetch();
+            return;
+        }
         if (request.engineer_id) {
             void NotificationService.sendToUser(
                 request.engineer_id,
@@ -190,12 +208,30 @@ export default function ReviewPage() {
     };
 
     const reject = async (request: MonthlyRequest & { engineer?: Profile }) => {
+        if (!user?.id) {
+            setError('Session admin tidak valid.');
+            return;
+        }
         const id = request.id;
-        const { error: err } = await supabase.from('monthly_requests').update({
-            status: 'rejected', reviewed_by: user!.id, reviewed_at: new Date().toISOString(),
-            rejection_reason: 'Ditolak oleh admin',
-        }).eq('id', id);
+        const reviewedAt = new Date().toISOString();
+        const { data: updatedRow, error: err } = await supabase
+            .from('monthly_requests')
+            .update({
+                status: 'rejected',
+                reviewed_by: user.id,
+                reviewed_at: reviewedAt,
+                rejection_reason: 'Ditolak oleh admin',
+            })
+            .eq('id', id)
+            .eq('status', 'pending')
+            .select('id')
+            .maybeSingle();
         if (err) { setError(err.message); return; }
+        if (!updatedRow) {
+            setError('Request sudah diproses admin lain. Muat ulang data.');
+            await reviewQuery.refetch();
+            return;
+        }
         if (request.engineer_id) {
             void NotificationService.sendToUser(
                 request.engineer_id,

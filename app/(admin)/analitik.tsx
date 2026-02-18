@@ -327,7 +327,10 @@ type AnalitikData = {
 const fetchAnalitikData = async (): Promise<AnalitikData> => {
     const [statusSummary, usageRowsRes, engineersRes] = await Promise.all([
         fetchRequestStatusSummary(),
-        supabase.from('usage_reports').select('*').order('date', { ascending: false }),
+        supabase
+            .from('usage_reports')
+            .select('engineer_id, items, date, created_at')
+            .order('date', { ascending: false }),
         supabase.from('profiles').select('id, name, employee_id').eq('role', 'engineer'),
     ]);
 

@@ -445,20 +445,28 @@ export default function RequestPage() {
         if (!user?.id) return;
 
         setConfirmingId(id);
+        let markedCompleted = false;
+        let confirmedAtValue: string | null = null;
+
         try {
-            const { data: requestRow, error: requestError } = await supabase
+            const confirmedAt = new Date().toISOString();
+            const { data: completedRow, error: completeError } = await supabase
                 .from('monthly_requests')
-                .select('id, status, items')
+                .update({ status: 'completed', confirmed_at: confirmedAt })
                 .eq('id', id)
                 .eq('engineer_id', user.id)
-                .single();
-            if (requestError) throw requestError;
-            if (!requestRow || requestRow.status !== 'delivered') {
+                .eq('status', 'delivered')
+                .select('id, status, confirmed_at, items')
+                .maybeSingle();
+            if (completeError) throw completeError;
+            if (!completedRow || completedRow.status !== 'completed') {
                 setError('Request belum berstatus delivered.');
                 return;
             }
+            markedCompleted = true;
+            confirmedAtValue = confirmedAt;
 
-            const deliveredItems = ((requestRow.items as RequestItem[]) || []).filter(i => i.quantity > 0);
+            const deliveredItems = ((completedRow.items as RequestItem[]) || []).filter(i => i.quantity > 0);
             const qtyByPart = new Map<string, number>();
             for (const item of deliveredItems) {
                 qtyByPart.set(item.partId, (qtyByPart.get(item.partId) || 0) + item.quantity);
@@ -522,20 +530,6 @@ export default function RequestPage() {
                 }
             }
 
-            const confirmedAt = new Date().toISOString();
-            const { data: completedRow, error: completeError } = await supabase
-                .from('monthly_requests')
-                .update({ status: 'completed', confirmed_at: confirmedAt })
-                .eq('id', id)
-                .eq('engineer_id', user.id)
-                .eq('status', 'delivered')
-                .select('id, status, confirmed_at')
-                .maybeSingle();
-            if (completeError) throw completeError;
-            if (!completedRow || completedRow.status !== 'completed') {
-                throw new Error('Konfirmasi tidak tersimpan. Cek policy update monthly_requests untuk engineer.');
-            }
-
             setSuccess('Penerimaan dikonfirmasi. Stok berhasil ditambahkan.');
             void NotificationService.sendToRole(
                 'admin',
@@ -545,6 +539,21 @@ export default function RequestPage() {
             ).catch((e) => console.error('[request.confirmDelivery] Notification error:', e));
             await refetchRequestData();
         } catch (e: any) {
+            if (markedCompleted && confirmedAtValue) {
+                const { error: rollbackError } = await supabase
+                    .from('monthly_requests')
+                    .update({ status: 'delivered', confirmed_at: null })
+                    .eq('id', id)
+                    .eq('engineer_id', user.id)
+                    .eq('status', 'completed')
+                    .eq('confirmed_at', confirmedAtValue);
+
+                if (rollbackError) {
+                    console.error('[request.confirmDelivery] rollback failed:', rollbackError.message);
+                    setError('Gagal konfirmasi dan rollback status gagal. Cek data request dengan admin.');
+                    return;
+                }
+            }
             setError(e?.message || 'Gagal konfirmasi penerimaan.');
         } finally {
             setConfirmingId(null);

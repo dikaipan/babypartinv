@@ -6,6 +6,10 @@ node_modules/
 # Expo
 .expo/
 dist/
+dist-web-verify/
+dist-web-verify-2/
+dist-web-verify-3/
+web-auth.zip
 web-build/
 expo-env.d.ts
 
@@ -31,6 +35,7 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript

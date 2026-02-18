@@ -97,7 +97,7 @@ export default function RootLayout() {
         };
     }, [isWeb, isAdmin]);
 
-    if (!initialized || !fontsLoaded) {
+    if (!initialized) {
         return (
             <GestureHandlerRootView style={styles.flex}>
                 <PaperProvider theme={theme}>

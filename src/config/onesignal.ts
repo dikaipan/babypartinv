@@ -6,10 +6,26 @@ import { Platform } from 'react-native';
 const ONESIGNAL_APP_ID = 'e71e2327-736b-4a58-a55f-c3d4f7358018';
 
 export const initOneSignal = () => {
-    if (Platform.OS === 'web') return;
+    if (Platform.OS === 'web') {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+        script.defer = true;
+        script.onload = () => {
+            const OneSignalWeb = (window as any).OneSignal || [];
+            OneSignalWeb.push(() => {
+                OneSignalWeb.init({
+                    appId: ONESIGNAL_APP_ID,
+                    allowLocalhostAsSecureOrigin: true,
+                });
+            });
+        };
+        document.head.appendChild(script);
+        return;
+    }
 
     // Optional - set logging for debugging
     OneSignal.Debug.setLogLevel(LogLevel.Verbose);
+    // ... rest of native init
 
     // OneSignal Initialization
     OneSignal.initialize(ONESIGNAL_APP_ID);

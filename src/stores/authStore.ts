@@ -122,10 +122,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     resetPassword: async (email) => {
         set({ loading: true });
         try {
-            // TODO: Update this URL to your Cloudflare Pages domain once deployed
-            // e.g. 'https://your-project.pages.dev/reset-password.html'
+            const baseUrl = Platform.OS === 'web' ? window.location.origin : 'https://babypartreset.pages.dev';
             const { error } = await supabase.auth.resetPasswordForEmail(email, {
-                redirectTo: 'https://babypartreset.pages.dev/',
+                redirectTo: `${baseUrl}/reset-password.html`,
             });
             if (error) throw error;
             set({ loading: false });

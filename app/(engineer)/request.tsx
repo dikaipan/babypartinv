@@ -70,6 +70,7 @@ export default function RequestPage() {
     const [selectedPart, setSelectedPart] = useState<InventoryPart | null>(null);
     const [qty, setQty] = useState(1);
     const [confirmingId, setConfirmingId] = useState<string | null>(null);
+    const [confirmReceiveRequestId, setConfirmReceiveRequestId] = useState<string | null>(null);
     const periodCode = useMemo(() => {
         const now = new Date();
         return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -471,6 +472,13 @@ export default function RequestPage() {
         }
     };
 
+    const onConfirmReceive = async () => {
+        if (!confirmReceiveRequestId) return;
+        const requestId = confirmReceiveRequestId;
+        setConfirmReceiveRequestId(null);
+        await confirmDelivery(requestId);
+    };
+
     const statusColor = (s: RequestStatus) => {
         switch (s) {
             case 'pending': return Colors.accent;
@@ -635,7 +643,7 @@ export default function RequestPage() {
                                         styles.btnEdit,
                                         { flex: 1, backgroundColor: Colors.primary, opacity: confirmingId === r.id ? 0.72 : 1 },
                                     ]}
-                                    onPress={() => confirmDelivery(r.id)}
+                                    onPress={() => setConfirmReceiveRequestId(r.id)}
                                     disabled={confirmingId === r.id}
                                 >
                                     <MaterialCommunityIcons name="check-circle-outline" size={18} color="#FFF" />
@@ -825,6 +833,47 @@ export default function RequestPage() {
                                 )}
                             </BottomSheet>
                         )}
+                    </View>
+                </Modal>
+            </Portal>
+
+            <Portal>
+                <Modal
+                    visible={!!confirmReceiveRequestId}
+                    onDismiss={() => {
+                        if (!confirmingId) setConfirmReceiveRequestId(null);
+                    }}
+                    contentContainerStyle={styles.confirmReceiveModal}
+                >
+                    <View style={styles.confirmReceiveCard}>
+                        <View style={styles.confirmReceiveIconWrap}>
+                            <MaterialCommunityIcons name="package-check" size={24} color={Colors.primary} />
+                        </View>
+                        <Text style={styles.confirmReceiveTitle}>Konfirmasi Penerimaan</Text>
+                        <Text style={styles.confirmReceiveDesc}>
+                            Apakah part sudah diterima? Stok engineer akan ditambahkan setelah konfirmasi.
+                        </Text>
+                        <View style={styles.confirmReceiveActions}>
+                            <Pressable
+                                style={styles.confirmReceiveBtnSecondary}
+                                onPress={() => setConfirmReceiveRequestId(null)}
+                                disabled={!!confirmingId}
+                            >
+                                <Text style={styles.confirmReceiveBtnSecondaryText}>Belum</Text>
+                            </Pressable>
+                            <Pressable
+                                style={[
+                                    styles.confirmReceiveBtnPrimary,
+                                    !!confirmingId && styles.confirmReceiveBtnPrimaryDisabled,
+                                ]}
+                                onPress={onConfirmReceive}
+                                disabled={!!confirmingId}
+                            >
+                                <Text style={styles.confirmReceiveBtnPrimaryText}>
+                                    {confirmingId ? 'Memproses...' : 'Ya, Sudah Diterima'}
+                                </Text>
+                            </Pressable>
+                        </View>
                     </View>
                 </Modal>
             </Portal>

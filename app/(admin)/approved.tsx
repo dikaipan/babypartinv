@@ -456,7 +456,7 @@ export default function ApprovedPage() {
                 void NotificationService.sendToUser(
                     request.engineer_id,
                     'Barang Dikirim',
-                    'Admin telah mengirim request Anda. Segera konfirmasi penerimaan.',
+                    'Admin telah mengirim request Anda. Konfirmasi jika part sudah diterima.',
                     { request_id: id, status: 'delivered', type: 'request_progress' },
                 ).catch((e) => console.error('[approved.markDelivered] Notification error:', e));
             }

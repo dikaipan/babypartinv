@@ -78,6 +78,13 @@ export default function AkunPage() {
         .slice(0, 2)
         .join('')
         .toUpperCase();
+    const profileRows = [
+        { key: 'name', icon: 'account-outline', label: 'Nama', value: user?.name || '-' },
+        { key: 'id', icon: 'badge-account-outline', label: 'ID Karyawan', value: user?.employee_id || '-' },
+        { key: 'email', icon: 'email-outline', label: 'Email', value: user?.email || '-' },
+        { key: 'role', icon: 'shield-account-outline', label: 'Role', value: (user?.role || 'engineer').toUpperCase() },
+        { key: 'location', icon: 'map-marker-outline', label: 'Area', value: user?.location || '-' },
+    ];
 
     return (
         <ScrollView
@@ -94,18 +101,21 @@ export default function AkunPage() {
                 <View style={styles.avatarContainer}>
                     <Text style={styles.avatarText}>{initials}</Text>
                 </View>
-                <Text style={styles.name}>{user?.name}</Text>
-                <Text style={styles.employeeId}>ID: {user?.employee_id || '-'}</Text>
-                <Text style={styles.email}>{user?.email}</Text>
                 <View style={styles.roleBadge}>
                     <Text style={styles.roleText}>{(user?.role || 'engineer').toUpperCase()}</Text>
                 </View>
-                {user?.location && (
-                    <View style={styles.locationRow}>
-                        <MaterialCommunityIcons name="map-marker" size={14} color={Colors.textSecondary} />
-                        <Text style={styles.locationText}>{user.location}</Text>
+            </View>
+
+            <View style={styles.infoCard}>
+                {profileRows.map((item, idx) => (
+                    <View key={item.key} style={[styles.infoRow, idx !== profileRows.length - 1 && styles.infoRowDivider]}>
+                        <View style={styles.infoLeft}>
+                            <MaterialCommunityIcons name={item.icon as any} size={16} color={Colors.textSecondary} />
+                            <Text style={styles.infoLabel}>{item.label}</Text>
+                        </View>
+                        <Text style={styles.infoValue} numberOfLines={1}>{item.value}</Text>
                     </View>
-                )}
+                ))}
             </View>
 
             {/* Actions */}
@@ -120,9 +130,23 @@ export default function AkunPage() {
                     </View>
                     <MaterialCommunityIcons name="chevron-right" size={24} color={Colors.textMuted} />
                 </Pressable>
-                {!!syncMessage && <Text style={styles.syncMessage}>{syncMessage}</Text>}
-                {!!oneSignalId && <Text style={styles.debugText}>OneSignal ID: {oneSignalId}</Text>}
-                {!!pushToken && <Text style={styles.debugText}>Push Token: {pushToken}</Text>}
+                {(!!syncMessage || !!oneSignalId || !!pushToken) && (
+                    <View style={styles.pushMetaCard}>
+                        {!!syncMessage && <Text style={styles.syncMessage}>{syncMessage}</Text>}
+                        {!!oneSignalId && (
+                            <View style={styles.pushMetaRow}>
+                                <Text style={styles.pushMetaLabel}>OneSignal ID</Text>
+                                <Text style={styles.pushMetaValue} numberOfLines={1}>{oneSignalId}</Text>
+                            </View>
+                        )}
+                        {!!pushToken && (
+                            <View style={styles.pushMetaRow}>
+                                <Text style={styles.pushMetaLabel}>Push Token</Text>
+                                <Text style={styles.pushMetaValue} numberOfLines={1}>{pushToken}</Text>
+                            </View>
+                        )}
+                    </View>
+                )}
 
                 <Pressable style={styles.actionCard} onPress={signOut}>
                     <View style={[styles.actionIcon, { backgroundColor: Colors.danger + '20' }]}>
@@ -160,16 +184,30 @@ const styles = StyleSheet.create({
         justifyContent: 'center', alignItems: 'center', marginBottom: 16,
     },
     avatarText: { fontSize: 32, fontWeight: '700', color: Colors.primary },
-    name: { fontSize: 22, fontWeight: '700', color: Colors.text },
-    employeeId: { fontSize: 14, color: Colors.primary, marginTop: 4 },
-    email: { fontSize: 14, color: Colors.textSecondary, marginTop: 4 },
     roleBadge: {
         backgroundColor: Colors.primary + '20', paddingHorizontal: 16, paddingVertical: 6,
-        borderRadius: 20, marginTop: 12,
+        borderRadius: 20,
     },
     roleText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
-    locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 },
-    locationText: { fontSize: 13, color: Colors.textSecondary },
+    infoCard: {
+        marginTop: 20,
+        backgroundColor: Colors.card,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+    },
+    infoRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 13,
+        gap: 12,
+    },
+    infoRowDivider: { borderBottomWidth: 1, borderBottomColor: Colors.border },
+    infoLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 },
+    infoLabel: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
+    infoValue: { flex: 1, textAlign: 'right', fontSize: 13, color: Colors.text, fontWeight: '600' },
     actions: { marginTop: 32, gap: 12 },
     actionCard: {
         flexDirection: 'row', alignItems: 'center', gap: 14,
@@ -180,8 +218,24 @@ const styles = StyleSheet.create({
     actionIcon: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
     actionTitle: { fontSize: 15, fontWeight: '600', color: Colors.text },
     actionDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
-    syncMessage: { marginTop: -4, marginLeft: 4, fontSize: 12, color: Colors.info },
-    debugText: { marginTop: -6, marginLeft: 4, fontSize: 11, color: Colors.textMuted },
+    pushMetaCard: {
+        marginTop: -4,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: 10,
+        backgroundColor: Colors.surface,
+        padding: 10,
+        gap: 8,
+    },
+    syncMessage: { fontSize: 12, color: Colors.info },
+    pushMetaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+    },
+    pushMetaLabel: { fontSize: 11, color: Colors.textMuted, fontWeight: '600' },
+    pushMetaValue: { flex: 1, textAlign: 'right', fontSize: 11, color: Colors.textSecondary },
     footer: { alignItems: 'center', marginTop: 'auto', paddingVertical: 24 },
     footerText: { fontSize: 14, color: Colors.textMuted },
     footerVersion: { fontSize: 12, color: Colors.textMuted },

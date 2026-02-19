@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, LayoutAnimation, Platform, UIManager, Modal, Share, FlatList, Alert } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, Platform, UIManager, Modal, Share, FlatList, Alert } from 'react-native';
 import { Text, Chip, Searchbar, Button, SegmentedButtons } from 'react-native-paper';
 import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -575,7 +575,6 @@ export default function ReportsPage() {
     }, [areaGroups, filterArea, debouncedSearch]);
 
     const toggleArea = (area: string) => {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setExpandedAreas(prev => {
             const next = new Set(prev);
             if (next.has(area)) next.delete(area); else next.add(area);
@@ -1195,7 +1194,6 @@ export default function ReportsPage() {
                 <SegmentedButtons
                     value={tab}
                     onValueChange={v => {
-                        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                         setTab(v as Tab);
                     }}
                     buttons={[
@@ -1213,6 +1211,7 @@ export default function ReportsPage() {
                 <FlatList
                     style={styles.listViewport}
                     data={filteredGroups}
+                    extraData={expandedAreas}
                     keyExtractor={(item) => item.area}
                     renderItem={renderAreaItem}
                     ItemSeparatorComponent={() => <View style={styles.areaCardSeparator} />}

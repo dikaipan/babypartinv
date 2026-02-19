@@ -103,6 +103,7 @@ export default function RootLayout() {
     const isWeb = Platform.OS === 'web';
     const isAdmin = segments[0] === '(admin)';
     const isWebMobile = isWeb && width < 768;
+    const isAdminOnWebMobile = isAdmin && isWebMobile;
 
     useEffect(() => {
         if (!isWeb) return;
@@ -136,12 +137,22 @@ export default function RootLayout() {
                 body,
                 #root,
                 #expo-root {
+                    width: 100%;
+                    max-width: 100vw;
+                    overflow-x: hidden;
                     scrollbar-width: none;
                     -ms-overflow-style: none;
                 }
                 * {
+                    min-width: 0;
+                    box-sizing: border-box;
                     scrollbar-width: none;
                     -ms-overflow-style: none;
+                }
+                input,
+                textarea,
+                select {
+                    max-width: 100%;
                 }
                 *::-webkit-scrollbar {
                     width: 0 !important;
@@ -242,7 +253,7 @@ export default function RootLayout() {
                     <View style={[styles.flex, isWeb && styles.webContainer]}>
                         <View style={[
                             styles.flex,
-                            isWeb && (isAdmin ? styles.webContentAdmin : styles.webContentMobile)
+                            isWeb && (isAdminOnWebMobile ? styles.webContentMobile : (isAdmin ? styles.webContentAdmin : styles.webContentMobile))
                         ]}>
                             <Slot />
                         </View>
@@ -269,6 +280,8 @@ const styles = StyleSheet.create({
     webContentMobile: {
         width: '100%',
         maxWidth: 480,
+        minWidth: 0,
+        overflow: 'hidden',
         borderLeftWidth: 1,
         borderRightWidth: 1,
         borderColor: Colors.border,
@@ -280,5 +293,6 @@ const styles = StyleSheet.create({
     webContentAdmin: {
         width: '100%',
         maxWidth: 1600,
+        minWidth: 0,
     },
 });

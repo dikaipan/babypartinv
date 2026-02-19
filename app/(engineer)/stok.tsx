@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Modal as RNModal, Platform } from 'react-native';
+import { View, StyleSheet, FlatList, RefreshControl, Pressable, TextInput, Modal as RNModal, Platform, useWindowDimensions } from 'react-native';
 import { Text, IconButton } from 'react-native-paper';
 import { useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -95,8 +95,11 @@ const fetchEngineerStockData = async (engineerId: string): Promise<EngineerStock
 export default function StokPage() {
     const { user } = useAuthStore();
     const insets = useSafeAreaInsets();
+    const { width } = useWindowDimensions();
     const navigation = useNavigation<any>();
     const unreadCount = useUnreadCount();
+    const isSmallWebViewport = Platform.OS === 'web' && width < 390;
+    const isExtraSmallWebViewport = Platform.OS === 'web' && width < 350;
 
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState<StockFilter>('all');
@@ -107,6 +110,8 @@ export default function StokPage() {
     const [newStockValue, setNewStockValue] = useState('');
     const [minStockValue, setMinStockValue] = useState('');
     const [reason, setReason] = useState('');
+    const [reasonWarningVisible, setReasonWarningVisible] = useState(false);
+    const [reasonInvalid, setReasonInvalid] = useState(false);
     const [saving, setSaving] = useState(false);
 
     const [error, setError] = useState('');
@@ -273,6 +278,8 @@ export default function StokPage() {
         setNewStockValue('');
         setMinStockValue('');
         setReason('');
+        setReasonWarningVisible(false);
+        setReasonInvalid(false);
         setSaving(false);
     };
 
@@ -295,7 +302,8 @@ export default function StokPage() {
             return;
         }
         if (!reason.trim()) {
-            setError('Alasan koreksi wajib diisi.');
+            setReasonInvalid(true);
+            setReasonWarningVisible(true);
             return;
         }
 
@@ -392,7 +400,7 @@ export default function StokPage() {
     ];
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
+        <View style={[styles.container, { paddingTop: insets.top + 12, paddingHorizontal: isExtraSmallWebViewport ? 12 : 16 }]}>
             <FlatList
                 data={filtered}
                 keyExtractor={(item) => `${item.engineer_id}-${item.part_id}`}
@@ -417,13 +425,13 @@ export default function StokPage() {
                             <NotificationBell unreadCount={unreadCount} onPress={() => navigation.navigate('notifications' as never)} />
                         </View>
 
-                        <View style={styles.titleRow}>
+                        <View style={[styles.titleRow, isSmallWebViewport && styles.titleRowCompact]}>
                             <View>
-                                <Text style={styles.sectionTitle}>Stok Saya</Text>
+                                <Text style={[styles.sectionTitle, isExtraSmallWebViewport && styles.sectionTitleCompact]}>Stok Saya</Text>
                                 {lastSync ? <Text style={styles.syncText}>Sync: {lastSync}</Text> : null}
                             </View>
-                            <View style={styles.summaryRow}>
-                                <View style={styles.summaryCard}>
+                            <View style={[styles.summaryRow, isSmallWebViewport && styles.summaryRowCompact]}>
+                                <View style={[styles.summaryCard, isSmallWebViewport && styles.summaryCardCompact]}>
                                     <View style={styles.summaryIconWrap}>
                                         <MaterialCommunityIcons name="cube-outline" size={18} color={Colors.primary} />
                                     </View>
@@ -432,7 +440,7 @@ export default function StokPage() {
                                         <Text style={styles.summaryLabel}>Total Item</Text>
                                     </View>
                                 </View>
-                                <View style={[styles.summaryCard, styles.summaryCardLow]}>
+                                <View style={[styles.summaryCard, styles.summaryCardLow, isSmallWebViewport && styles.summaryCardCompact]}>
                                     <View style={[styles.summaryIconWrap, styles.summaryIconWrapLow]}>
                                         <MaterialCommunityIcons name="alert-outline" size={18} color={Colors.accent} />
                                     </View>
@@ -590,8 +598,14 @@ export default function StokPage() {
                                     </Pressable>
                                 </View>
 
-                                <Text style={styles.sheetPartName}>{selectedStock.part_name}</Text>
+                                <Text style={[styles.sheetPartName, isSmallWebViewport && styles.sheetPartNameCompact]}>{selectedStock.part_name}</Text>
                                 <Text style={styles.sheetPartId}>ID: {selectedStock.part_id}</Text>
+                                {reasonWarningVisible && sheetMode === 'adjust' && (
+                                    <View style={styles.reasonPopup}>
+                                        <MaterialCommunityIcons name="alert-circle-outline" size={16} color={Colors.danger} />
+                                        <Text style={styles.reasonPopupText}>Alasan koreksi wajib diisi sebelum simpan.</Text>
+                                    </View>
+                                )}
 
                                 {sheetMode === 'adjust' ? (
                                     <>
@@ -605,22 +619,33 @@ export default function StokPage() {
                                             <TextInput
                                                 value={newStockValue}
                                                 onChangeText={(value) => setNewStockValue(sanitizeNumber(value))}
+                                                onFocus={() => {
+                                                    if (newStockValue === '0') setNewStockValue('');
+                                                }}
                                                 keyboardType="number-pad"
                                                 placeholder="Stok Baru"
                                                 placeholderTextColor="#99A2B0"
                                                 style={styles.inputText}
+                                                underlineColorAndroid="transparent"
                                             />
                                         </View>
                                         <Text style={styles.currentStockText}>Stok sekarang: {selectedStock.quantity}</Text>
 
-                                        <View style={styles.inputContainer}>
+                                        <View style={[styles.inputContainer, reasonInvalid && styles.inputContainerError]}>
                                             <MaterialCommunityIcons name="text-box-edit-outline" size={25} color="#E7EDF6" />
                                             <TextInput
                                                 value={reason}
-                                                onChangeText={setReason}
+                                                onChangeText={(value) => {
+                                                    setReason(value);
+                                                    if (value.trim().length > 0) {
+                                                        setReasonInvalid(false);
+                                                        setReasonWarningVisible(false);
+                                                    }
+                                                }}
                                                 placeholder="Alasan (Wajib)"
                                                 placeholderTextColor="#99A2B0"
                                                 style={styles.inputText}
+                                                underlineColorAndroid="transparent"
                                             />
                                         </View>
                                     </>
@@ -637,10 +662,14 @@ export default function StokPage() {
                                             <TextInput
                                                 value={minStockValue}
                                                 onChangeText={(value) => setMinStockValue(sanitizeNumber(value))}
+                                                onFocus={() => {
+                                                    if (minStockValue === '0') setMinStockValue('');
+                                                }}
                                                 keyboardType="number-pad"
                                                 placeholder="0"
                                                 placeholderTextColor="#99A2B0"
                                                 style={styles.inputText}
+                                                underlineColorAndroid="transparent"
                                             />
                                         </View>
                                     </>
@@ -708,10 +737,18 @@ const styles = StyleSheet.create({
         alignItems: 'flex-start',
         gap: 10,
     },
+    titleRowCompact: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: 8,
+    },
     sectionTitle: {
         fontSize: 24,
         color: Colors.text,
         fontWeight: '700',
+    },
+    sectionTitleCompact: {
+        fontSize: 21,
     },
     syncText: {
         marginTop: 4,
@@ -722,6 +759,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 8,
         marginTop: 8,
+    },
+    summaryRowCompact: {
+        width: '100%',
+        marginTop: 2,
     },
     summaryCard: {
         minWidth: 118,
@@ -734,6 +775,10 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#0F4E58',
         backgroundColor: '#0B2531',
+    },
+    summaryCardCompact: {
+        flex: 1,
+        minWidth: 0,
     },
     summaryCardLow: {
         borderColor: '#5C441E',
@@ -987,10 +1032,32 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         lineHeight: 34,
     },
+    sheetPartNameCompact: {
+        fontSize: 24,
+        lineHeight: 28,
+    },
     sheetPartId: {
         color: '#A5B0C0',
         fontSize: 17,
         marginTop: -2,
+    },
+    reasonPopup: {
+        marginTop: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: Colors.danger + '14',
+        borderWidth: 1,
+        borderColor: Colors.danger + '55',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+    },
+    reasonPopupText: {
+        flex: 1,
+        color: '#F7C4C4',
+        fontSize: 13,
+        fontWeight: '600',
     },
     sheetSectionTitle: {
         marginTop: 8,
@@ -1011,19 +1078,34 @@ const styles = StyleSheet.create({
     inputContainer: {
         height: 54,
         borderRadius: 18,
-        borderWidth: 1,
-        borderColor: '#4A5568',
-        backgroundColor: '#171E28',
+        borderWidth: 0,
+        backgroundColor: '#1B2430',
         paddingHorizontal: 16,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
+        overflow: 'hidden',
+    },
+    inputContainerError: {
+        borderWidth: 1,
+        borderColor: Colors.danger + '80',
+        backgroundColor: '#2A1E28',
     },
     inputText: {
         flex: 1,
         color: Colors.text,
         fontSize: 18,
         paddingVertical: 0,
+        backgroundColor: 'transparent',
+        borderWidth: 0,
+        ...(Platform.OS === 'web' ? ({
+            outlineStyle: 'none',
+            outlineWidth: 0,
+            outlineColor: 'transparent',
+            boxShadow: 'none',
+            appearance: 'none',
+            WebkitAppearance: 'none',
+        } as any) : {}),
     },
     currentStockText: {
         marginTop: -2,

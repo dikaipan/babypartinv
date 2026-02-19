@@ -7,6 +7,7 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
+import { getSupabaseAuthCallbackBaseUrl } from '../../src/config/authCallbacks';
 import { useAuthStore } from '../../src/stores/authStore';
 import { Profile } from '../../src/types';
 import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeRefresh';
@@ -244,7 +245,7 @@ export default function UsersPage() {
 
         setSendingReset(true);
         try {
-            const baseUrl = Platform.OS === 'web' ? window.location.origin : 'https://babypartinv.pages.dev';
+            const baseUrl = getSupabaseAuthCallbackBaseUrl();
             const { error: resetError } = await supabase.auth.resetPasswordForEmail(targetEmail, {
                 redirectTo: `${baseUrl}/reset-password.html`,
             });

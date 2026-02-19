@@ -14,16 +14,37 @@ export default function ForgotPasswordPage() {
     const { resetPassword, loading } = useAuthStore();
     const router = useRouter();
 
+    const toResetErrorMessage = (err: unknown) => {
+        const rawMessage = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+        const message = rawMessage.toLowerCase();
+
+        if (message.includes('redirect_to') && message.includes('not allowed')) {
+            return 'Konfigurasi link reset belum valid. Hubungi admin aplikasi.';
+        }
+        if (message.includes('rate limit')) {
+            return 'Terlalu banyak percobaan. Coba lagi beberapa menit lagi.';
+        }
+        if (message.includes('format email tidak valid')) {
+            return 'Format email tidak valid.';
+        }
+        if (message.includes('email wajib diisi')) {
+            return 'Email wajib diisi.';
+        }
+
+        return rawMessage || 'Gagal mengirim link reset password';
+    };
+
     const handleReset = async () => {
-        if (!email) {
+        const normalizedEmail = email.trim().toLowerCase();
+        if (!normalizedEmail) {
             setError('Email wajib diisi');
             return;
         }
         try {
-            await resetPassword(email.trim());
+            await resetPassword(normalizedEmail);
             setMessage('Link reset password telah dikirim ke email Anda. Silakan cek inbox/spam.');
         } catch (e: any) {
-            setError(e.message || 'Gagal mengirim link reset password');
+            setError(toResetErrorMessage(e));
         }
     };
 

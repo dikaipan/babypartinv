@@ -5,6 +5,7 @@ import { normalizeArea } from '../utils/normalizeArea';
 import { syncPushIdentity, logoutPushIdentity } from '../config/onesignal';
 import { Platform } from 'react-native';
 import type { User } from '@supabase/supabase-js';
+import { getSupabaseAuthCallbackBaseUrl } from '../config/authCallbacks';
 
 type SignUpResult = {
     requiresEmailConfirmation: boolean;
@@ -18,18 +19,23 @@ type ProfileSeed = {
     role?: UserRole;
 };
 
-const FALLBACK_CALLBACK_BASE_URL = 'https://babypartinv.pages.dev';
-
-const getCallbackBaseUrl = () => {
-    if (Platform.OS !== 'web') return FALLBACK_CALLBACK_BASE_URL;
-    const origin = (globalThis as { location?: { origin?: string } }).location?.origin;
-    return origin || FALLBACK_CALLBACK_BASE_URL;
-};
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const normalizeOptionalText = (value?: string | null) => {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+};
+
+const normalizeAuthEmail = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+        throw new Error('Email wajib diisi.');
+    }
+    if (!EMAIL_REGEX.test(normalized)) {
+        throw new Error('Format email tidak valid.');
+    }
+    return normalized;
 };
 
 const buildProfilePayload = (
@@ -377,8 +383,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
         signIn: async (email, password) => {
             set({ loading: true });
             try {
+                const normalizedEmail = normalizeAuthEmail(email);
+                if (!password) {
+                    throw new Error('Password wajib diisi.');
+                }
                 const { data, error } = await supabase.auth.signInWithPassword({
-                    email: email.trim().toLowerCase(),
+                    email: normalizedEmail,
                     password,
                 });
                 if (error) throw error;
@@ -400,12 +410,12 @@ export const useAuthStore = create<AuthState>((set, get) => {
         signUp: async (email, password, name, employeeId, location) => {
             set({ loading: true });
             try {
-                const normalizedEmail = email.trim().toLowerCase();
+                const normalizedEmail = normalizeAuthEmail(email);
                 const normalizedName = name.trim();
                 const normalizedEmployeeId = normalizeOptionalText(employeeId);
                 const normalizedLocation = normalizeOptionalText(location);
                 const areaGroup = normalizedLocation ? normalizeArea(normalizedLocation) : null;
-                const callbackBaseUrl = getCallbackBaseUrl();
+                const callbackBaseUrl = getSupabaseAuthCallbackBaseUrl();
                 const { data, error } = await supabase.auth.signUp({
                     email: normalizedEmail,
                     password,
@@ -443,8 +453,9 @@ export const useAuthStore = create<AuthState>((set, get) => {
         resetPassword: async (email) => {
             set({ loading: true });
             try {
-                const baseUrl = getCallbackBaseUrl();
-                const { error } = await supabase.auth.resetPasswordForEmail(email, {
+                const normalizedEmail = normalizeAuthEmail(email);
+                const baseUrl = getSupabaseAuthCallbackBaseUrl();
+                const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
                     redirectTo: `${baseUrl}/reset-password.html`,
                 });
                 if (error) throw error;

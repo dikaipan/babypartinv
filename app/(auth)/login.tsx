@@ -23,16 +23,23 @@ export default function LoginPage() {
         if (message.includes('invalid login credentials')) {
             return 'Email atau password salah.';
         }
+        if (message.includes('format email tidak valid')) {
+            return 'Format email tidak valid.';
+        }
+        if (message.includes('email wajib diisi') || message.includes('password wajib diisi')) {
+            return 'Email dan password wajib diisi.';
+        }
         return rawMessage || 'Login gagal';
     };
 
     const handleLogin = async () => {
-        if (!email || !password) {
+        const normalizedEmail = email.trim().toLowerCase();
+        if (!normalizedEmail || !password) {
             setError('Email dan password wajib diisi');
             return;
         }
         try {
-            await signIn(email.trim(), password);
+            await signIn(normalizedEmail, password);
         } catch (e: any) {
             setError(toLoginErrorMessage(e));
         }

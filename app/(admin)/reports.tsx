@@ -53,15 +53,6 @@ type RiskPartRow = {
     daysToStockout: number;
 };
 
-type EngineerStockAlertViewRow = {
-    area_group?: string | null;
-    engineer_id: string;
-    engineer_name?: string | null;
-    empty_parts?: number | null;
-    low_parts?: number | null;
-    total_qty?: number | null;
-};
-
 const MONITOR_WINDOW_OPTIONS: { value: MonitorWindow; label: string }[] = [
     { value: '24h', label: '24 jam' },
     { value: '7d', label: '7 hari' },
@@ -157,7 +148,6 @@ const getAlertVisual = (severity: AlertSeverity) => {
 type ReportsData = {
     profiles: Profile[];
     engineerStocks: EngineerStock[];
-    engineerStockAlerts: EngineerStockAlertViewRow[];
     parts: InventoryPart[];
     adjustments: any[];
     deliveries: any[];
@@ -238,30 +228,14 @@ const fetchAllEngineerStockRows = async (): Promise<{ data: EngineerStock[]; err
     return { data: rows, error: null };
 };
 
-const fetchEngineerStockAlertRows = async (): Promise<{ data: EngineerStockAlertViewRow[]; error: any }> => {
-    const res = await supabase
-        .from('vw_engineer_stock_alert_by_area')
-        .select('area_group, engineer_id, engineer_name, empty_parts, low_parts, total_qty');
-
-    if (res.error) {
-        return { data: [], error: res.error };
-    }
-
-    return {
-        data: (res.data || []) as EngineerStockAlertViewRow[],
-        error: null,
-    };
-};
-
 const fetchReportsData = async (): Promise<ReportsData> => {
     const now = Date.now();
     const usageCutoffIso = new Date(now - (MONITOR_USAGE_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
     const openRequestCutoffIso = new Date(now - (MONITOR_OPEN_REQUEST_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
 
-    const [profilesRes, stockRes, alertRes, partsRes, delRes, openReqRes, usageRes, adjRes] = await Promise.all([
+    const [profilesRes, stockRes, partsRes, delRes, openReqRes, usageRes, adjRes] = await Promise.all([
         supabase.from('profiles').select('id, name, email, role, is_active, employee_id, location').eq('role', 'engineer'),
         fetchAllEngineerStockRows(),
-        fetchEngineerStockAlertRows(),
         supabase.from('inventory').select('id, part_name, total_stock, min_stock'),
         supabase
             .from('monthly_requests')
@@ -284,7 +258,6 @@ const fetchReportsData = async (): Promise<ReportsData> => {
     const firstError = [
         profilesRes.error,
         stockRes.error,
-        alertRes.error,
         partsRes.error,
         delRes.error,
         openReqRes.error,
@@ -312,7 +285,6 @@ const fetchReportsData = async (): Promise<ReportsData> => {
     return {
         profiles,
         engineerStocks: stockRes.data || [],
-        engineerStockAlerts: alertRes.data || [],
         parts: partsRes.data || [],
         adjustments,
         deliveries: delRes.data || [],
@@ -432,7 +404,6 @@ export default function ReportsPage() {
     const lastUpdatedAt = reportsQuery.data?.fetchedAt || null;
     const profiles = reportsQuery.data?.profiles || [];
     const engineerStocks = reportsQuery.data?.engineerStocks || [];
-    const engineerStockAlerts = reportsQuery.data?.engineerStockAlerts || [];
     const parts = reportsQuery.data?.parts || [];
     const monitorRequests = reportsQuery.data?.monitorRequests || [];
     const usageReports = reportsQuery.data?.usageReports || [];
@@ -653,7 +624,6 @@ export default function ReportsPage() {
         [profiles, engineerStockSummary]
     );
     const engineerAlertRows = useMemo(() => {
-        const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
         const byEngineer = new Map<string, {
             engineerId: string;
             engineerName: string;
@@ -661,26 +631,22 @@ export default function ReportsPage() {
             area: string;
             totalQty: number;
             status: 'empty' | 'low';
-            emptyParts: number;
-            lowParts: number;
         }>();
 
-        for (const row of engineerStockAlerts) {
-            const engineerId = String(row.engineer_id || '').trim();
+        for (const profile of profiles) {
+            const engineerId = String(profile.id || '').trim();
             if (!engineerId) continue;
 
-            const emptyParts = Number(row.empty_parts || 0);
-            const lowParts = Number(row.low_parts || 0);
-            const status: 'empty' | 'low' | null = emptyParts > 0 ? 'empty' : (lowParts > 0 ? 'low' : null);
+            const totalQty = Number(engineerStockSummary.get(engineerId)?.totalQty || 0);
+            const status: 'empty' | 'low' | null = totalQty <= 0
+                ? 'empty'
+                : (totalQty < ENGINEER_LOW_STOCK_THRESHOLD ? 'low' : null);
             if (!status) continue;
 
-            const profile = profileById.get(engineerId);
-            const totalQtyRaw = Number(row.total_qty);
-            const totalQty = Number.isFinite(totalQtyRaw) ? totalQtyRaw : 0;
-            const areaRaw = row.area_group || profile?.location || 'Unknown Area';
+            const areaRaw = profile.location || 'Unknown Area';
             const area = normalizeArea(String(areaRaw));
-            const engineerName = String(row.engineer_name || profile?.name || '-');
-            const employeeId = profile?.employee_id || null;
+            const engineerName = String(profile.name || '-');
+            const employeeId = profile.employee_id || null;
 
             const next = {
                 engineerId,
@@ -689,22 +655,12 @@ export default function ReportsPage() {
                 area,
                 totalQty,
                 status,
-                emptyParts,
-                lowParts,
             };
-            const existing = byEngineer.get(engineerId);
-            if (!existing) {
-                byEngineer.set(engineerId, next);
-                continue;
-            }
-
-            if (existing.status === 'low' && next.status === 'empty') {
-                byEngineer.set(engineerId, next);
-            }
+            byEngineer.set(engineerId, next);
         }
 
         return Array.from(byEngineer.values());
-    }, [engineerStockAlerts, profiles]);
+    }, [profiles, engineerStockSummary]);
     const engineersWithZero = useMemo(
         () => engineerAlertRows.filter((row) => row.status === 'empty').length,
         [engineerAlertRows]

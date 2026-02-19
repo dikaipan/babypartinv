@@ -42,6 +42,29 @@ const fetchUsers = async (): Promise<Profile[]> => {
     return data || [];
 };
 
+const setPasswordByAdmin = async (userId: string, password: string) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+        throw new Error('Sesi login tidak valid. Silakan login ulang.');
+    }
+
+    const { data, error } = await supabase.functions.invoke('admin-set-password', {
+        body: { userId, password },
+        headers: {
+            Authorization: `Bearer ${session.access_token}`,
+        },
+    });
+
+    if (error) {
+        throw error;
+    }
+
+    const payload = (data || {}) as { ok?: boolean; error?: string };
+    if (!payload.ok) {
+        throw new Error(payload.error || 'Gagal memperbarui password user.');
+    }
+};
+
 export default function UsersPage() {
     const { width, height } = useWindowDimensions();
     const { user: currentUser, refreshProfile } = useAuthStore();
@@ -208,11 +231,6 @@ export default function UsersPage() {
     const updatePassword = async () => {
         if (!selectedUser || savingPassword) return;
 
-        if (currentUser?.id !== selectedUser.id) {
-            setError('Edit password langsung hanya untuk akun yang sedang login. Untuk user lain, gunakan reset password.');
-            return;
-        }
-
         const password = newPassword.trim();
         const confirmation = confirmPassword.trim();
         if (password.length < 6) {
@@ -226,12 +244,17 @@ export default function UsersPage() {
 
         setSavingPassword(true);
         try {
-            const { error: updatePasswordError } = await supabase.auth.updateUser({ password });
-            if (updatePasswordError) throw updatePasswordError;
+            const isSelf = currentUser?.id === selectedUser.id;
+            if (isSelf) {
+                const { error: updatePasswordError } = await supabase.auth.updateUser({ password });
+                if (updatePasswordError) throw updatePasswordError;
+            } else {
+                await setPasswordByAdmin(selectedUser.id, password);
+            }
 
             setNewPassword('');
             setConfirmPassword('');
-            setSuccess('Password berhasil diperbarui.');
+            setSuccess(`Password ${selectedUser.name || selectedUser.email} berhasil diperbarui.`);
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Gagal mengubah password.';
             setError(message);
@@ -554,10 +577,10 @@ export default function UsersPage() {
                                     loading={savingPassword}
                                     disabled={savingPassword}
                                 >
-                                    Edit Password
+                                    Set Password
                                 </Button>
                                 <Text style={styles.helperText}>
-                                    Edit password langsung hanya untuk akun yang sedang login.
+                                    Admin bisa set password langsung tanpa menunggu user online.
                                 </Text>
 
                                 <View style={styles.sectionDivider} />

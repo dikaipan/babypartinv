@@ -5,7 +5,10 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 type SetPasswordRequest = {
     userId?: string;
     password?: string;
+    email?: string;
 };
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -88,17 +91,35 @@ Deno.serve(async (req: Request) => {
 
         const targetUserId = sanitize(body.userId, 100);
         const password = sanitize(body.password, 200);
+        const email = sanitize(body.email, 200).toLowerCase();
 
         if (!targetUserId) {
             return json(400, { ok: false, error: 'userId wajib diisi.' });
         }
-        if (!password || password.length < 6) {
+        if (!password && !email) {
+            return json(400, { ok: false, error: 'Minimal salah satu dari password/email wajib diisi.' });
+        }
+        if (password && password.length < 6) {
             return json(400, { ok: false, error: 'Password minimal 6 karakter.' });
         }
+        if (email && !EMAIL_REGEX.test(email)) {
+            return json(400, { ok: false, error: 'Format email tidak valid.' });
+        }
 
-        const { error: updateError } = await serviceClient.auth.admin.updateUserById(targetUserId, {
-            password,
-        });
+        const updatePayload: {
+            password?: string;
+            email?: string;
+            email_confirm?: boolean;
+        } = {};
+        if (password) {
+            updatePayload.password = password;
+        }
+        if (email) {
+            updatePayload.email = email;
+            updatePayload.email_confirm = true;
+        }
+
+        const { error: updateError } = await serviceClient.auth.admin.updateUserById(targetUserId, updatePayload);
         if (updateError) {
             return json(400, { ok: false, error: updateError.message || 'Gagal memperbarui password user.' });
         }
@@ -109,4 +130,3 @@ Deno.serve(async (req: Request) => {
         return json(500, { ok: false, error: 'Unexpected error.' });
     }
 });
-

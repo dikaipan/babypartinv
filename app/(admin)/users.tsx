@@ -26,8 +26,9 @@ type UserFormState = {
 
 const EMAIL_REGEX = /\S+@\S+\.\S+/;
 const BREACHED_PASSWORD_PATTERNS = ['breached', 'pwned', 'weak password', 'password is known'];
+const EMAIL_CONFLICT_PATTERNS = ['already registered', 'already exists', 'duplicate key value'];
 
-const extractSetPasswordErrorMessage = async (error: unknown) => {
+const extractAdminAuthUpdateErrorMessage = async (error: unknown) => {
     if (error instanceof FunctionsHttpError) {
         try {
             const payload = (await error.context.json()) as { error?: string; message?: string };
@@ -36,6 +37,9 @@ const extractSetPasswordErrorMessage = async (error: unknown) => {
                 const lowered = message.toLowerCase();
                 if (BREACHED_PASSWORD_PATTERNS.some((pattern) => lowered.includes(pattern))) {
                     return 'Password terlalu lemah atau termasuk password bocor. Gunakan kombinasi yang lebih kuat.';
+                }
+                if (EMAIL_CONFLICT_PATTERNS.some((pattern) => lowered.includes(pattern))) {
+                    return 'Email sudah terpakai oleh akun lain.';
                 }
                 return message;
             }
@@ -49,10 +53,13 @@ const extractSetPasswordErrorMessage = async (error: unknown) => {
         if (BREACHED_PASSWORD_PATTERNS.some((pattern) => lowered.includes(pattern))) {
             return 'Password terlalu lemah atau termasuk password bocor. Gunakan kombinasi yang lebih kuat.';
         }
+        if (EMAIL_CONFLICT_PATTERNS.some((pattern) => lowered.includes(pattern))) {
+            return 'Email sudah terpakai oleh akun lain.';
+        }
         return error.message;
     }
 
-    return 'Gagal memperbarui password user.';
+    return 'Gagal memperbarui data login user.';
 };
 
 const mapProfileToForm = (profile: Profile): UserFormState => ({
@@ -73,26 +80,32 @@ const fetchUsers = async (): Promise<Profile[]> => {
     return data || [];
 };
 
-const setPasswordByAdmin = async (userId: string, password: string) => {
+const updateUserAuthByAdmin = async (
+    userId: string,
+    updates: {
+        password?: string;
+        email?: string;
+    },
+) => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.access_token) {
         throw new Error('Sesi login tidak valid. Silakan login ulang.');
     }
 
     const { data, error } = await supabase.functions.invoke('admin-set-password', {
-        body: { userId, password },
+        body: { userId, ...updates },
         headers: {
             Authorization: `Bearer ${session.access_token}`,
         },
     });
 
     if (error) {
-        throw new Error(await extractSetPasswordErrorMessage(error));
+        throw new Error(await extractAdminAuthUpdateErrorMessage(error));
     }
 
     const payload = (data || {}) as { ok?: boolean; error?: string };
     if (!payload.ok) {
-        throw new Error(payload.error || 'Gagal memperbarui password user.');
+        throw new Error(payload.error || 'Gagal memperbarui data login user.');
     }
 };
 
@@ -193,6 +206,8 @@ export default function UsersPage() {
 
         const name = userForm.name.trim();
         const email = userForm.email.trim().toLowerCase();
+        const currentEmail = selectedUser.email.trim().toLowerCase();
+        const emailChanged = email !== currentEmail;
 
         if (!name || !email) {
             setError('Nama dan email wajib diisi.');
@@ -205,6 +220,10 @@ export default function UsersPage() {
 
         setSavingUser(true);
         try {
+            if (emailChanged) {
+                await updateUserAuthByAdmin(selectedUser.id, { email });
+            }
+
             const { error: updateError } = await supabase
                 .from('profiles')
                 .update({
@@ -224,7 +243,7 @@ export default function UsersPage() {
                 await refreshProfile();
             }
             await usersQuery.refetch();
-            setSuccess('Data user berhasil diperbarui.');
+            setSuccess(emailChanged ? 'Data user berhasil diperbarui. Email login juga tersinkron.' : 'Data user berhasil diperbarui.');
             closeManageModal();
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Gagal memperbarui data user.';
@@ -237,7 +256,12 @@ export default function UsersPage() {
     const sendPasswordReset = async () => {
         if (!selectedUser || sendingReset) return;
 
-        const targetEmail = userForm.email.trim().toLowerCase();
+        const draftEmail = userForm.email.trim().toLowerCase();
+        const targetEmail = selectedUser.email.trim().toLowerCase();
+        if (draftEmail !== targetEmail) {
+            setError('Simpan perubahan email dulu sebelum kirim reset password.');
+            return;
+        }
         if (!EMAIL_REGEX.test(targetEmail)) {
             setError('Email user tidak valid untuk reset password.');
             return;
@@ -280,7 +304,7 @@ export default function UsersPage() {
                 const { error: updatePasswordError } = await supabase.auth.updateUser({ password });
                 if (updatePasswordError) throw updatePasswordError;
             } else {
-                await setPasswordByAdmin(selectedUser.id, password);
+                await updateUserAuthByAdmin(selectedUser.id, { password });
             }
 
             setNewPassword('');

@@ -1,7 +1,7 @@
-# Admin Set Password (Supabase Edge Function)
+# Admin Update User Auth (Supabase Edge Function)
 
 ## Tujuan
-Memungkinkan admin mengganti password user lain langsung dari halaman Users, tanpa user target harus online.
+Memungkinkan admin mengganti password dan/atau email login user langsung dari halaman Users, tanpa user target harus online.
 
 ## Secrets yang wajib diset
 - `SUPABASE_URL`
@@ -28,11 +28,13 @@ Body JSON:
 ```json
 {
   "userId": "uuid-user-target",
-  "password": "password-baru"
+  "password": "password-baru",
+  "email": "email-baru@example.com"
 }
 ```
 
 ## Aturan akses
 - Hanya requester dengan role `admin` di tabel `profiles` yang diizinkan.
+- Minimal salah satu dari `password` atau `email` wajib diisi.
 - Password minimal 6 karakter.
-
+- Email (jika dikirim) harus valid.

@@ -149,7 +149,6 @@ type ReportsData = {
     engineerStocks: EngineerStock[];
     parts: InventoryPart[];
     adjustments: any[];
-    updatedEngineerIds: string[];
     deliveries: any[];
     monitorRequests: MonitorRequestRow[];
     usageReports: UsageReportRow[];
@@ -169,14 +168,6 @@ type AdjustmentRow = {
     notes?: string | null;
     timestamp: string;
 };
-
-type AdjustmentParticipantRow = {
-    engineer_id?: string | null;
-    engineer_name?: string | null;
-};
-
-const ADJUSTMENT_PARTICIPANT_PAGE_SIZE = 1000;
-const ADJUSTMENT_PARTICIPANT_MAX_PAGES = 30;
 
 const fetchRecentStockAdjustments = async (): Promise<{ data: AdjustmentRow[]; error: any }> => {
     const selectVariants = [
@@ -236,90 +227,6 @@ const fetchAllEngineerStockRows = async (): Promise<{ data: EngineerStock[]; err
     return { data: rows, error: null };
 };
 
-const fetchUpdatedEngineerIdsFromAdjustments = async (profiles: Profile[]): Promise<{ data: string[]; error: any }> => {
-    if (profiles.length === 0) return { data: [], error: null };
-
-    const profileIdSet = new Set(profiles.map((profile) => profile.id));
-    const profileNameToIds = new Map<string, string[]>();
-    for (const profile of profiles) {
-        const nameKey = String(profile.name || '').trim().toLowerCase();
-        if (!nameKey) continue;
-        const existing = profileNameToIds.get(nameKey);
-        if (existing) {
-            existing.push(profile.id);
-        } else {
-            profileNameToIds.set(nameKey, [profile.id]);
-        }
-    }
-
-    const selectVariants: { clause: string; useTimestampOrder: boolean }[] = [
-        { clause: 'engineer_id, engineer_name, timestamp', useTimestampOrder: true },
-        { clause: 'engineer_id, engineer_name', useTimestampOrder: false },
-        { clause: 'engineer_id', useTimestampOrder: false },
-        { clause: 'engineer_name', useTimestampOrder: false },
-    ];
-
-    let lastError: any = null;
-    for (const variant of selectVariants) {
-        const matchedIds = new Set<string>();
-        let variantFailed = false;
-
-        for (let page = 0; page < ADJUSTMENT_PARTICIPANT_MAX_PAGES; page++) {
-            const from = page * ADJUSTMENT_PARTICIPANT_PAGE_SIZE;
-            const to = from + ADJUSTMENT_PARTICIPANT_PAGE_SIZE - 1;
-            let query = supabase
-                .from('stock_adjustments')
-                .select(variant.clause)
-                .range(from, to);
-            if (variant.useTimestampOrder) {
-                query = query.order('timestamp', { ascending: false });
-            }
-
-            const res = await query;
-            if (res.error) {
-                lastError = res.error;
-                variantFailed = true;
-                break;
-            }
-
-            const rows = (res.data || []) as AdjustmentParticipantRow[];
-            for (const row of rows) {
-                const engineerId = String(row.engineer_id || '').trim();
-                if (engineerId && profileIdSet.has(engineerId)) {
-                    matchedIds.add(engineerId);
-                    continue;
-                }
-
-                const engineerNameKey = String(row.engineer_name || '').trim().toLowerCase();
-                if (!engineerNameKey) continue;
-                const mappedIds = profileNameToIds.get(engineerNameKey);
-                if (!mappedIds) continue;
-                for (const id of mappedIds) matchedIds.add(id);
-            }
-
-            if (matchedIds.size >= profileIdSet.size) {
-                return { data: Array.from(matchedIds), error: null };
-            }
-            if (rows.length < ADJUSTMENT_PARTICIPANT_PAGE_SIZE) {
-                return { data: Array.from(matchedIds), error: null };
-            }
-        }
-
-        if (!variantFailed) {
-            return { data: Array.from(matchedIds), error: null };
-        }
-
-        const message = String(lastError?.message || '').toLowerCase();
-        const isMissingColumnError = lastError?.code === '42703' || message.includes('does not exist');
-        if (!isMissingColumnError) break;
-    }
-
-    return {
-        data: [],
-        error: lastError,
-    };
-};
-
 const fetchReportsData = async (): Promise<ReportsData> => {
     const now = Date.now();
     const usageCutoffIso = new Date(now - (MONITOR_USAGE_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
@@ -362,10 +269,6 @@ const fetchReportsData = async (): Promise<ReportsData> => {
     }
 
     const profiles = (profilesRes.data || []) as Profile[];
-    const updatedEngineersRes = await fetchUpdatedEngineerIdsFromAdjustments(profiles);
-    if (updatedEngineersRes.error) {
-        console.warn('[reports] stock_adjustments participants query failed:', updatedEngineersRes.error);
-    }
 
     const usageReportsRaw = Array.isArray(usageRes.data) ? (usageRes.data as UsageReportRow[]) : [];
     const usageReports = usageReportsRaw.map((row) => ({
@@ -383,7 +286,6 @@ const fetchReportsData = async (): Promise<ReportsData> => {
         engineerStocks: stockRes.data || [],
         parts: partsRes.data || [],
         adjustments,
-        updatedEngineerIds: updatedEngineersRes.data || [],
         deliveries: delRes.data || [],
         monitorRequests: (openReqRes.data || []) as MonitorRequestRow[],
         usageReports,
@@ -490,7 +392,6 @@ export default function ReportsPage() {
     const monitorRequests = reportsQuery.data?.monitorRequests || [];
     const usageReports = reportsQuery.data?.usageReports || [];
     const adjustments = reportsQuery.data?.adjustments || [];
-    const updatedEngineerIds = reportsQuery.data?.updatedEngineerIds || [];
     const deliveries = reportsQuery.data?.deliveries || [];
 
     const isWide = width >= 768;
@@ -684,31 +585,44 @@ export default function ReportsPage() {
 
     // Summary stats
     const totalEngineers = profiles.length;
-    const totalStockQty = useMemo(() => {
+    const engineerStockSummary = useMemo(() => {
         const profileIdSet = new Set(profiles.map((profile) => profile.id));
-        return engineerStocks.reduce((sum, row) => {
-            if (!profileIdSet.has(row.engineer_id)) return sum;
+        const summary = new Map<string, { rowCount: number; totalQty: number; positiveQtyTotal: number }>();
+        for (const row of engineerStocks) {
+            if (!profileIdSet.has(row.engineer_id)) continue;
             const qty = Number(row.quantity);
-            if (!Number.isFinite(qty) || qty <= 0) return sum;
-            return sum + qty;
-        }, 0);
+            if (!Number.isFinite(qty)) continue;
+            const existing = summary.get(row.engineer_id) || { rowCount: 0, totalQty: 0, positiveQtyTotal: 0 };
+            existing.rowCount += 1;
+            existing.totalQty += qty;
+            if (qty > 0) existing.positiveQtyTotal += qty;
+            summary.set(row.engineer_id, existing);
+        }
+        return summary;
     }, [profiles, engineerStocks]);
-    const engineersUpdatedStock = updatedEngineerIds.length;
+    const totalStockQty = useMemo(
+        () => Array.from(engineerStockSummary.values()).reduce((sum, item) => sum + item.positiveQtyTotal, 0),
+        [engineerStockSummary]
+    );
+    const engineersUpdatedStock = useMemo(
+        () => profiles.filter((profile) => (engineerStockSummary.get(profile.id)?.totalQty || 0) > 0).length,
+        [profiles, engineerStockSummary]
+    );
     const engineersWithoutStockRows = useMemo(() => {
-        const engineersWithRow = new Set(engineerStocks.map((row) => row.engineer_id));
         return profiles
-            .filter((profile) => !engineersWithRow.has(profile.id))
+            .filter((profile) => !engineerStockSummary.has(profile.id))
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    }, [profiles, engineerStocks]);
+    }, [profiles, engineerStockSummary]);
     const missingStockRowsPreview = useMemo(
         () => engineersWithoutStockRows.slice(0, MISSING_STOCK_LIST_PREVIEW_LIMIT),
         [engineersWithoutStockRows]
     );
     const missingStockRowsRemaining = Math.max(0, engineersWithoutStockRows.length - missingStockRowsPreview.length);
-    const engineersWithZero = useMemo(() => {
-        const engIds = new Set(engineerStocks.filter((s) => Number(s.quantity) > 0).map((s) => s.engineer_id));
-        return profiles.filter((p) => !engIds.has(p.id)).length;
-    }, [profiles, engineerStocks]);
+    const engineersWithZero = useMemo(
+        () => profiles.filter((profile) => (engineerStockSummary.get(profile.id)?.totalQty || 0) <= 0).length,
+        [profiles, engineerStockSummary]
+    );
+    const engineersWithRowsButNonPositive = Math.max(0, engineersWithZero - engineersWithoutStockRows.length);
     const monitorWindowDays = useMemo(() => monitorWindowToDays(monitorWindow), [monitorWindow]);
     const monitorWindowLabel = useMemo(
         () => MONITOR_WINDOW_OPTIONS.find((opt) => opt.value === monitorWindow)?.label || monitorWindow,
@@ -969,7 +883,7 @@ export default function ReportsPage() {
             pushRow(['Avg Lead Time', averageLeadTimeLabel]);
             pushRow(['Total Engineers', totalEngineers]);
             pushRow(['Total Stock Qty', totalStockQty]);
-            pushRow(['Engineers Updated Stock', engineersUpdatedStock]);
+            pushRow(['Engineers w/ Positive Stock', engineersUpdatedStock]);
             pushRow(['Engineers w/ Zero Stock', engineersWithZero]);
             pushEmpty();
 
@@ -1297,6 +1211,7 @@ export default function ReportsPage() {
             {/* ═══ Monitor Tab ═══ */}
             {tab === 'monitor' && (
                 <FlatList
+                    style={styles.listViewport}
                     data={filteredGroups}
                     keyExtractor={(item) => item.area}
                     renderItem={renderAreaItem}
@@ -1304,7 +1219,8 @@ export default function ReportsPage() {
                     initialNumToRender={3}
                     maxToRenderPerBatch={3}
                     windowSize={5}
-                    removeClippedSubviews={true}
+                    removeClippedSubviews={false}
+                    keyboardShouldPersistTaps="handled"
                     contentContainerStyle={styles.monitorListContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
                     ListHeaderComponent={
@@ -1317,7 +1233,12 @@ export default function ReportsPage() {
                                     </View>
                                     <Text style={styles.monitorUpdatedAt}>Last updated {formatRelativeTime(lastUpdatedAt)}</Text>
                                 </View>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.monitorWindowChipRow}>
+                                <ScrollView
+                                    horizontal
+                                    showsHorizontalScrollIndicator={false}
+                                    contentContainerStyle={styles.monitorWindowChipRow}
+                                    nestedScrollEnabled
+                                >
                                     {MONITOR_WINDOW_OPTIONS.map((option) => {
                                         const isActive = option.value === monitorWindow;
                                         return (
@@ -1406,7 +1327,7 @@ export default function ReportsPage() {
 
                             <View style={[adminStyles.card, styles.monitorCoverageCard]}>
                                 <Text style={styles.monitorSectionTitle}>Engineer Coverage</Text>
-                                <Text style={styles.monitorSectionHint}>Ringkasan distribusi stok engineer lintas area.</Text>
+                                <Text style={styles.monitorSectionHint}>Ringkasan distribusi stok engineer lintas area (Sudah Update Stok = qty {'>'} 0).</Text>
                                 <View style={[styles.statsRow, !isWide && { flexWrap: 'wrap' }]}>
                                     {[
                                         { icon: 'account-group-outline', val: totalEngineers, label: 'Total Engineer', clr: Colors.info },
@@ -1430,6 +1351,9 @@ export default function ReportsPage() {
                                     </Text>
                                     <Text style={styles.coverageAuditHint}>
                                         Definisi: belum punya row di tabel engineer_stock.
+                                    </Text>
+                                    <Text style={styles.coverageAuditHint}>
+                                        Punya row tapi total qty {'<='} 0: {engineersWithRowsButNonPositive} engineer.
                                     </Text>
                                     {engineersWithoutStockRows.length > 0 && (
                                         <Pressable
@@ -1501,9 +1425,11 @@ export default function ReportsPage() {
             {/* ═══ Delivery Tab ═══ */}
             {tab === 'pengiriman' && (
                 <FlatList
+                    style={styles.listViewport}
                     data={deliveries}
                     keyExtractor={(item, index) => String(index)}
                     renderItem={renderDeliveryItem}
+                    keyboardShouldPersistTaps="handled"
                     contentContainerStyle={styles.defaultListContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
                     ListEmptyComponent={
@@ -1515,9 +1441,11 @@ export default function ReportsPage() {
             {/* ═══ Logs Tab ═══ */}
             {tab === 'koreksi' && (
                 <FlatList
+                    style={styles.listViewport}
                     data={adjustments}
                     keyExtractor={(item) => item.id}
                     renderItem={renderLogItem}
+                    keyboardShouldPersistTaps="handled"
                     contentContainerStyle={styles.defaultListContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} />}
                     ListEmptyComponent={
@@ -1548,6 +1476,7 @@ const styles = StyleSheet.create({
 
     tabContainer: { marginBottom: 20 },
     segmentedBtn: { borderRadius: 12 },
+    listViewport: { flex: 1 },
     monitorListContent: { paddingTop: 4, paddingBottom: 100, paddingHorizontal: 20 },
     defaultListContent: { paddingBottom: 100, paddingHorizontal: 20, gap: 16 },
 

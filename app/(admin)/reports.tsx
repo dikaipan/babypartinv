@@ -64,6 +64,9 @@ const REQUEST_OVERDUE_HOURS = 72;
 const RISK_STOCKOUT_THRESHOLD_DAYS = 14;
 const MONITOR_USAGE_FETCH_DAYS = 45;
 const MONITOR_OPEN_REQUEST_FETCH_DAYS = 21;
+const ENGINEER_STOCK_PAGE_SIZE = 1000;
+const ENGINEER_STOCK_MAX_PAGES = 30;
+const MISSING_STOCK_LIST_PREVIEW_LIMIT = 40;
 
 const monitorWindowToDays = (window: MonitorWindow): number => {
     if (window === '24h') return 1;
@@ -146,6 +149,7 @@ type ReportsData = {
     engineerStocks: EngineerStock[];
     parts: InventoryPart[];
     adjustments: any[];
+    updatedEngineerIds: string[];
     deliveries: any[];
     monitorRequests: MonitorRequestRow[];
     usageReports: UsageReportRow[];
@@ -165,6 +169,14 @@ type AdjustmentRow = {
     notes?: string | null;
     timestamp: string;
 };
+
+type AdjustmentParticipantRow = {
+    engineer_id?: string | null;
+    engineer_name?: string | null;
+};
+
+const ADJUSTMENT_PARTICIPANT_PAGE_SIZE = 1000;
+const ADJUSTMENT_PARTICIPANT_MAX_PAGES = 30;
 
 const fetchRecentStockAdjustments = async (): Promise<{ data: AdjustmentRow[]; error: any }> => {
     const selectVariants = [
@@ -200,6 +212,114 @@ const fetchRecentStockAdjustments = async (): Promise<{ data: AdjustmentRow[]; e
     };
 };
 
+const fetchAllEngineerStockRows = async (): Promise<{ data: EngineerStock[]; error: any }> => {
+    const rows: EngineerStock[] = [];
+    for (let page = 0; page < ENGINEER_STOCK_MAX_PAGES; page++) {
+        const from = page * ENGINEER_STOCK_PAGE_SIZE;
+        const to = from + ENGINEER_STOCK_PAGE_SIZE - 1;
+        const res = await supabase
+            .from('engineer_stock')
+            .select('engineer_id, part_id, quantity')
+            .range(from, to);
+
+        if (res.error) {
+            return { data: [], error: res.error };
+        }
+
+        const chunk = (res.data || []) as EngineerStock[];
+        rows.push(...chunk);
+        if (chunk.length < ENGINEER_STOCK_PAGE_SIZE) {
+            break;
+        }
+    }
+
+    return { data: rows, error: null };
+};
+
+const fetchUpdatedEngineerIdsFromAdjustments = async (profiles: Profile[]): Promise<{ data: string[]; error: any }> => {
+    if (profiles.length === 0) return { data: [], error: null };
+
+    const profileIdSet = new Set(profiles.map((profile) => profile.id));
+    const profileNameToIds = new Map<string, string[]>();
+    for (const profile of profiles) {
+        const nameKey = String(profile.name || '').trim().toLowerCase();
+        if (!nameKey) continue;
+        const existing = profileNameToIds.get(nameKey);
+        if (existing) {
+            existing.push(profile.id);
+        } else {
+            profileNameToIds.set(nameKey, [profile.id]);
+        }
+    }
+
+    const selectVariants: { clause: string; useTimestampOrder: boolean }[] = [
+        { clause: 'engineer_id, engineer_name, timestamp', useTimestampOrder: true },
+        { clause: 'engineer_id, engineer_name', useTimestampOrder: false },
+        { clause: 'engineer_id', useTimestampOrder: false },
+        { clause: 'engineer_name', useTimestampOrder: false },
+    ];
+
+    let lastError: any = null;
+    for (const variant of selectVariants) {
+        const matchedIds = new Set<string>();
+        let variantFailed = false;
+
+        for (let page = 0; page < ADJUSTMENT_PARTICIPANT_MAX_PAGES; page++) {
+            const from = page * ADJUSTMENT_PARTICIPANT_PAGE_SIZE;
+            const to = from + ADJUSTMENT_PARTICIPANT_PAGE_SIZE - 1;
+            let query = supabase
+                .from('stock_adjustments')
+                .select(variant.clause)
+                .range(from, to);
+            if (variant.useTimestampOrder) {
+                query = query.order('timestamp', { ascending: false });
+            }
+
+            const res = await query;
+            if (res.error) {
+                lastError = res.error;
+                variantFailed = true;
+                break;
+            }
+
+            const rows = (res.data || []) as AdjustmentParticipantRow[];
+            for (const row of rows) {
+                const engineerId = String(row.engineer_id || '').trim();
+                if (engineerId && profileIdSet.has(engineerId)) {
+                    matchedIds.add(engineerId);
+                    continue;
+                }
+
+                const engineerNameKey = String(row.engineer_name || '').trim().toLowerCase();
+                if (!engineerNameKey) continue;
+                const mappedIds = profileNameToIds.get(engineerNameKey);
+                if (!mappedIds) continue;
+                for (const id of mappedIds) matchedIds.add(id);
+            }
+
+            if (matchedIds.size >= profileIdSet.size) {
+                return { data: Array.from(matchedIds), error: null };
+            }
+            if (rows.length < ADJUSTMENT_PARTICIPANT_PAGE_SIZE) {
+                return { data: Array.from(matchedIds), error: null };
+            }
+        }
+
+        if (!variantFailed) {
+            return { data: Array.from(matchedIds), error: null };
+        }
+
+        const message = String(lastError?.message || '').toLowerCase();
+        const isMissingColumnError = lastError?.code === '42703' || message.includes('does not exist');
+        if (!isMissingColumnError) break;
+    }
+
+    return {
+        data: [],
+        error: lastError,
+    };
+};
+
 const fetchReportsData = async (): Promise<ReportsData> => {
     const now = Date.now();
     const usageCutoffIso = new Date(now - (MONITOR_USAGE_FETCH_DAYS * 24 * 60 * 60 * 1000)).toISOString();
@@ -207,7 +327,7 @@ const fetchReportsData = async (): Promise<ReportsData> => {
 
     const [profilesRes, stockRes, partsRes, delRes, openReqRes, usageRes, adjRes] = await Promise.all([
         supabase.from('profiles').select('id, name, email, role, is_active, employee_id, location').eq('role', 'engineer'),
-        supabase.from('engineer_stock').select('engineer_id, part_id, quantity'),
+        fetchAllEngineerStockRows(),
         supabase.from('inventory').select('id, part_name, total_stock, min_stock'),
         supabase
             .from('monthly_requests')
@@ -241,22 +361,29 @@ const fetchReportsData = async (): Promise<ReportsData> => {
         console.warn('[reports] stock_adjustments query failed:', adjRes.error);
     }
 
+    const profiles = (profilesRes.data || []) as Profile[];
+    const updatedEngineersRes = await fetchUpdatedEngineerIdsFromAdjustments(profiles);
+    if (updatedEngineersRes.error) {
+        console.warn('[reports] stock_adjustments participants query failed:', updatedEngineersRes.error);
+    }
+
     const usageReportsRaw = Array.isArray(usageRes.data) ? (usageRes.data as UsageReportRow[]) : [];
     const usageReports = usageReportsRaw.map((row) => ({
         date: row.date || null,
         items: row.items,
     }));
-    const profilesById = new Map((profilesRes.data || []).map((profile) => [profile.id, profile.name]));
+    const profilesById = new Map(profiles.map((profile) => [profile.id, profile.name]));
     const adjustments = (adjRes.data || []).map((row) => ({
         ...row,
         engineer_name: row.engineer_name || (row.engineer_id ? profilesById.get(row.engineer_id) : null) || null,
     }));
 
     return {
-        profiles: profilesRes.data || [],
+        profiles,
         engineerStocks: stockRes.data || [],
         parts: partsRes.data || [],
         adjustments,
+        updatedEngineerIds: updatedEngineersRes.data || [],
         deliveries: delRes.data || [],
         monitorRequests: (openReqRes.data || []) as MonitorRequestRow[],
         usageReports,
@@ -348,6 +475,7 @@ export default function ReportsPage() {
     const debouncedSearch = useDebounce(search, 300);
     const [filterArea, setFilterArea] = useState('Semua Area');
     const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
+    const [showMissingStockList, setShowMissingStockList] = useState(false);
     const [error, setError] = useState('');
     const reportsQuery = useQuery({
         queryKey: ['admin', 'reports'],
@@ -360,6 +488,7 @@ export default function ReportsPage() {
     const monitorRequests = reportsQuery.data?.monitorRequests || [];
     const usageReports = reportsQuery.data?.usageReports || [];
     const adjustments = reportsQuery.data?.adjustments || [];
+    const updatedEngineerIds = reportsQuery.data?.updatedEngineerIds || [];
     const deliveries = reportsQuery.data?.deliveries || [];
 
     const isWide = width >= 768;
@@ -482,10 +611,30 @@ export default function ReportsPage() {
 
     // Summary stats
     const totalEngineers = profiles.length;
-    const totalStockQty = useMemo(() => engineerStocks.reduce((s, e) => s + e.quantity, 0), [engineerStocks]);
+    const totalStockQty = useMemo(() => {
+        const profileIdSet = new Set(profiles.map((profile) => profile.id));
+        return engineerStocks.reduce((sum, row) => {
+            if (!profileIdSet.has(row.engineer_id)) return sum;
+            const qty = Number(row.quantity);
+            if (!Number.isFinite(qty) || qty <= 0) return sum;
+            return sum + qty;
+        }, 0);
+    }, [profiles, engineerStocks]);
+    const engineersUpdatedStock = updatedEngineerIds.length;
+    const engineersWithoutStockRows = useMemo(() => {
+        const engineersWithRow = new Set(engineerStocks.map((row) => row.engineer_id));
+        return profiles
+            .filter((profile) => !engineersWithRow.has(profile.id))
+            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }, [profiles, engineerStocks]);
+    const missingStockRowsPreview = useMemo(
+        () => engineersWithoutStockRows.slice(0, MISSING_STOCK_LIST_PREVIEW_LIMIT),
+        [engineersWithoutStockRows]
+    );
+    const missingStockRowsRemaining = Math.max(0, engineersWithoutStockRows.length - missingStockRowsPreview.length);
     const engineersWithZero = useMemo(() => {
-        const engIds = new Set(engineerStocks.filter(s => s.quantity > 0).map(s => s.engineer_id));
-        return profiles.filter(p => !engIds.has(p.id)).length;
+        const engIds = new Set(engineerStocks.filter((s) => Number(s.quantity) > 0).map((s) => s.engineer_id));
+        return profiles.filter((p) => !engIds.has(p.id)).length;
     }, [profiles, engineerStocks]);
     const monitorWindowDays = useMemo(() => monitorWindowToDays(monitorWindow), [monitorWindow]);
     const monitorWindowLabel = useMemo(
@@ -747,6 +896,7 @@ export default function ReportsPage() {
             pushRow(['Avg Lead Time', averageLeadTimeLabel]);
             pushRow(['Total Engineers', totalEngineers]);
             pushRow(['Total Stock Qty', totalStockQty]);
+            pushRow(['Engineers Updated Stock', engineersUpdatedStock]);
             pushRow(['Engineers w/ Zero Stock', engineersWithZero]);
             pushEmpty();
 
@@ -1172,6 +1322,7 @@ export default function ReportsPage() {
                                         { icon: 'account-group-outline', val: totalEngineers, label: 'Total Engineer', clr: Colors.info },
                                         { icon: 'map-marker-multiple-outline', val: areaGroups.length, label: 'Area Group', clr: Colors.primary },
                                         { icon: 'package-variant', val: totalStockQty, label: 'Total Stok Qty', clr: Colors.accent },
+                                        { icon: 'check-circle-outline', val: engineersUpdatedStock, label: 'Sudah Update Stok', clr: Colors.success },
                                         { icon: 'alert-circle-outline', val: engineersWithZero, label: 'Tanpa Stok', clr: Colors.danger },
                                     ].map((s, i) => (
                                         <View key={i} style={[styles.statCard, { borderColor: s.clr + '40' }]}>
@@ -1182,6 +1333,48 @@ export default function ReportsPage() {
                                             <Text style={styles.statLabel}>{s.label}</Text>
                                         </View>
                                     ))}
+                                </View>
+                                <View style={styles.coverageAuditBox}>
+                                    <Text style={styles.coverageAuditTitle}>
+                                        Belum Ada Data Stok: {engineersWithoutStockRows.length} engineer
+                                    </Text>
+                                    <Text style={styles.coverageAuditHint}>
+                                        Definisi: belum punya row di tabel engineer_stock.
+                                    </Text>
+                                    {engineersWithoutStockRows.length > 0 && (
+                                        <Pressable
+                                            style={styles.coverageAuditToggle}
+                                            onPress={() => setShowMissingStockList((prev) => !prev)}
+                                        >
+                                            <MaterialCommunityIcons
+                                                name={showMissingStockList ? 'chevron-up' : 'chevron-down'}
+                                                size={16}
+                                                color={Colors.primary}
+                                            />
+                                            <Text style={styles.coverageAuditToggleText}>
+                                                {showMissingStockList ? 'Sembunyikan daftar' : 'Tampilkan daftar engineer'}
+                                            </Text>
+                                        </Pressable>
+                                    )}
+                                    {showMissingStockList && engineersWithoutStockRows.length > 0 && (
+                                        <View style={styles.coverageMissingList}>
+                                            {missingStockRowsPreview.map((profile) => (
+                                                <View key={profile.id} style={styles.coverageMissingItem}>
+                                                    <Text style={styles.coverageMissingName} numberOfLines={1}>
+                                                        {profile.name || '-'}
+                                                    </Text>
+                                                    <Text style={styles.coverageMissingMeta} numberOfLines={1}>
+                                                        {profile.employee_id || profile.id}
+                                                    </Text>
+                                                </View>
+                                            ))}
+                                            {missingStockRowsRemaining > 0 && (
+                                                <Text style={styles.coverageMissingMore}>
+                                                    +{missingStockRowsRemaining} engineer lainnya
+                                                </Text>
+                                            )}
+                                        </View>
+                                    )}
                                 </View>
                             </View>
 
@@ -1291,6 +1484,34 @@ const styles = StyleSheet.create({
     statVal: { fontSize: 24, fontWeight: '800', color: Colors.text },
     statLabel: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' },
     monitorCoverageCard: { padding: 14, gap: 12 },
+    coverageAuditBox: {
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: 10,
+        padding: 10,
+        gap: 8,
+        backgroundColor: Colors.surface,
+    },
+    coverageAuditTitle: { fontSize: 12, fontWeight: '700', color: Colors.text },
+    coverageAuditHint: { fontSize: 11, color: Colors.textSecondary },
+    coverageAuditToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' },
+    coverageAuditToggleText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
+    coverageMissingList: { gap: 6 },
+    coverageMissingItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: Colors.border,
+        backgroundColor: Colors.card,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        gap: 8,
+    },
+    coverageMissingName: { flex: 1, fontSize: 12, fontWeight: '600', color: Colors.text },
+    coverageMissingMeta: { fontSize: 11, fontWeight: '600', color: Colors.textMuted, maxWidth: 160 },
+    coverageMissingMore: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic' },
 
     monitorEmptyText: { fontSize: 12, color: Colors.textMuted, marginTop: 6 },
 

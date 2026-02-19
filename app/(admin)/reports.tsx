@@ -20,6 +20,7 @@ if (Platform.OS === 'android' && !isAndroidFabric && UIManager.setLayoutAnimatio
 type Tab = 'monitor' | 'pengiriman' | 'koreksi';
 type MonitorWindow = '24h' | '7d' | '14d';
 type AlertSeverity = 'critical' | 'warning' | 'info';
+type EngineerAlertFilter = 'all' | 'empty' | 'low';
 
 type MonitorRequestRow = {
     id: string;
@@ -66,7 +67,7 @@ const MONITOR_USAGE_FETCH_DAYS = 45;
 const MONITOR_OPEN_REQUEST_FETCH_DAYS = 21;
 const ENGINEER_STOCK_PAGE_SIZE = 1000;
 const ENGINEER_STOCK_MAX_PAGES = 30;
-const MISSING_STOCK_LIST_PREVIEW_LIMIT = 40;
+const ENGINEER_LOW_STOCK_THRESHOLD = 5;
 
 const monitorWindowToDays = (window: MonitorWindow): number => {
     if (window === '24h') return 1;
@@ -367,6 +368,21 @@ interface AreaGroupData {
     engineerCount: number;
 }
 
+interface EngineerStockAlertItem {
+    engineerId: string;
+    engineerName: string;
+    employeeId: string | null;
+    totalQty: number;
+    status: 'empty' | 'low';
+}
+
+interface AreaStockAlertGroup {
+    area: string;
+    alerts: EngineerStockAlertItem[];
+    emptyCount: number;
+    lowCount: number;
+}
+
 /* ─── Main Page ─── */
 export default function ReportsPage() {
     const { width } = useWindowDimensions();
@@ -376,8 +392,8 @@ export default function ReportsPage() {
     const [search, setSearch] = useState('');
     const debouncedSearch = useDebounce(search, 300);
     const [filterArea, setFilterArea] = useState('Semua Area');
+    const [engineerAlertFilter, setEngineerAlertFilter] = useState<EngineerAlertFilter>('all');
     const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
-    const [showMissingStockList, setShowMissingStockList] = useState(false);
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [deletingEngineerIds, setDeletingEngineerIds] = useState<Set<string>>(new Set());
@@ -607,21 +623,92 @@ export default function ReportsPage() {
         () => profiles.filter((profile) => (engineerStockSummary.get(profile.id)?.totalQty || 0) > 0).length,
         [profiles, engineerStockSummary]
     );
-    const engineersWithoutStockRows = useMemo(() => {
-        return profiles
-            .filter((profile) => !engineerStockSummary.has(profile.id))
-            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    }, [profiles, engineerStockSummary]);
-    const missingStockRowsPreview = useMemo(
-        () => engineersWithoutStockRows.slice(0, MISSING_STOCK_LIST_PREVIEW_LIMIT),
-        [engineersWithoutStockRows]
-    );
-    const missingStockRowsRemaining = Math.max(0, engineersWithoutStockRows.length - missingStockRowsPreview.length);
     const engineersWithZero = useMemo(
         () => profiles.filter((profile) => (engineerStockSummary.get(profile.id)?.totalQty || 0) <= 0).length,
         [profiles, engineerStockSummary]
     );
-    const engineersWithRowsButNonPositive = Math.max(0, engineersWithZero - engineersWithoutStockRows.length);
+    const engineersLowStock = useMemo(
+        () => profiles.filter((profile) => {
+            const totalQty = engineerStockSummary.get(profile.id)?.totalQty || 0;
+            return totalQty > 0 && totalQty < ENGINEER_LOW_STOCK_THRESHOLD;
+        }).length,
+        [profiles, engineerStockSummary]
+    );
+    const engineerStockAlertsByArea = useMemo<AreaStockAlertGroup[]>(() => {
+        const grouped = new Map<string, AreaStockAlertGroup>();
+
+        for (const profile of profiles) {
+            const area = profile.location ? normalizeArea(profile.location) : 'Unknown Area';
+            const totalQty = engineerStockSummary.get(profile.id)?.totalQty || 0;
+            let status: 'empty' | 'low' | null = null;
+            if (totalQty <= 0) status = 'empty';
+            else if (totalQty < ENGINEER_LOW_STOCK_THRESHOLD) status = 'low';
+            if (!status) continue;
+
+            if (!grouped.has(area)) {
+                grouped.set(area, {
+                    area,
+                    alerts: [],
+                    emptyCount: 0,
+                    lowCount: 0,
+                });
+            }
+
+            const group = grouped.get(area)!;
+            group.alerts.push({
+                engineerId: profile.id,
+                engineerName: profile.name || '-',
+                employeeId: profile.employee_id || null,
+                totalQty,
+                status,
+            });
+            if (status === 'empty') group.emptyCount += 1;
+            else group.lowCount += 1;
+        }
+
+        return Array.from(grouped.values())
+            .map((group) => ({
+                ...group,
+                alerts: group.alerts.sort((a, b) => {
+                    if (a.status !== b.status) return a.status === 'empty' ? -1 : 1;
+                    if (a.totalQty !== b.totalQty) return a.totalQty - b.totalQty;
+                    return a.engineerName.localeCompare(b.engineerName);
+                }),
+            }))
+            .sort((a, b) => a.area.localeCompare(b.area));
+    }, [profiles, engineerStockSummary]);
+    const scopedEngineerStockAlertsByArea = useMemo(
+        () => filterArea === 'Semua Area'
+            ? engineerStockAlertsByArea
+            : engineerStockAlertsByArea.filter((group) => group.area === filterArea),
+        [engineerStockAlertsByArea, filterArea]
+    );
+    const filteredEngineerStockAlertsByArea = useMemo(
+        () => scopedEngineerStockAlertsByArea
+            .map((group) => {
+                if (engineerAlertFilter === 'all') return group;
+                const status = engineerAlertFilter;
+                const alerts = group.alerts.filter((item) => item.status === status);
+                if (alerts.length === 0) return null;
+                return {
+                    area: group.area,
+                    alerts,
+                    emptyCount: alerts.filter((item) => item.status === 'empty').length,
+                    lowCount: alerts.filter((item) => item.status === 'low').length,
+                } as AreaStockAlertGroup;
+            })
+            .filter(Boolean) as AreaStockAlertGroup[],
+        [scopedEngineerStockAlertsByArea, engineerAlertFilter]
+    );
+    const scopedEngineerAlertSummary = useMemo(
+        () => scopedEngineerStockAlertsByArea.reduce((summary, group) => {
+            summary.total += group.alerts.length;
+            summary.empty += group.emptyCount;
+            summary.low += group.lowCount;
+            return summary;
+        }, { total: 0, empty: 0, low: 0 }),
+        [scopedEngineerStockAlertsByArea]
+    );
     const monitorWindowDays = useMemo(() => monitorWindowToDays(monitorWindow), [monitorWindow]);
     const monitorWindowLabel = useMemo(
         () => MONITOR_WINDOW_OPTIONS.find((opt) => opt.value === monitorWindow)?.label || monitorWindow,
@@ -1333,6 +1420,7 @@ export default function ReportsPage() {
                                         { icon: 'map-marker-multiple-outline', val: areaGroups.length, label: 'Area Group', clr: Colors.primary },
                                         { icon: 'package-variant', val: totalStockQty, label: 'Total Stok Qty', clr: Colors.accent },
                                         { icon: 'check-circle-outline', val: engineersUpdatedStock, label: 'Sudah Update Stok', clr: Colors.success },
+                                        { icon: 'alert-outline', val: engineersLowStock, label: `Stok Minim (<${ENGINEER_LOW_STOCK_THRESHOLD})`, clr: Colors.accent },
                                         { icon: 'alert-circle-outline', val: engineersWithZero, label: 'Tanpa Stok', clr: Colors.danger },
                                     ].map((s, i) => (
                                         <View key={i} style={[styles.statCard, { borderColor: s.clr + '40' }]}>
@@ -1344,51 +1432,95 @@ export default function ReportsPage() {
                                         </View>
                                     ))}
                                 </View>
-                                <View style={styles.coverageAuditBox}>
-                                    <Text style={styles.coverageAuditTitle}>
-                                        Belum Ada Data Stok: {engineersWithoutStockRows.length} engineer
-                                    </Text>
-                                    <Text style={styles.coverageAuditHint}>
-                                        Definisi: belum punya row di tabel engineer_stock.
-                                    </Text>
-                                    <Text style={styles.coverageAuditHint}>
-                                        Punya row tapi total qty {'<='} 0: {engineersWithRowsButNonPositive} engineer.
-                                    </Text>
-                                    {engineersWithoutStockRows.length > 0 && (
-                                        <Pressable
-                                            style={styles.coverageAuditToggle}
-                                            onPress={() => setShowMissingStockList((prev) => !prev)}
-                                        >
-                                            <MaterialCommunityIcons
-                                                name={showMissingStockList ? 'chevron-up' : 'chevron-down'}
-                                                size={16}
-                                                color={Colors.primary}
-                                            />
-                                            <Text style={styles.coverageAuditToggleText}>
-                                                {showMissingStockList ? 'Sembunyikan daftar' : 'Tampilkan daftar engineer'}
-                                            </Text>
-                                        </Pressable>
-                                    )}
-                                    {showMissingStockList && engineersWithoutStockRows.length > 0 && (
-                                        <View style={styles.coverageMissingList}>
-                                            {missingStockRowsPreview.map((profile) => (
-                                                <View key={profile.id} style={styles.coverageMissingItem}>
-                                                    <Text style={styles.coverageMissingName} numberOfLines={1}>
-                                                        {profile.name || '-'}
-                                                    </Text>
-                                                    <Text style={styles.coverageMissingMeta} numberOfLines={1}>
-                                                        {profile.employee_id || profile.id}
-                                                    </Text>
-                                                </View>
-                                            ))}
-                                            {missingStockRowsRemaining > 0 && (
-                                                <Text style={styles.coverageMissingMore}>
-                                                    +{missingStockRowsRemaining} engineer lainnya
-                                                </Text>
-                                            )}
-                                        </View>
-                                    )}
+                            </View>
+
+                            <View style={[adminStyles.card, styles.engineerAlertCard]}>
+                                <Text style={styles.monitorSectionTitle}>Alert Stok Engineer by Area</Text>
+                                <Text style={styles.monitorSectionHint}>
+                                    Kosong = total qty 0, Minim = total qty {'<'} {ENGINEER_LOW_STOCK_THRESHOLD}.
+                                </Text>
+
+                                <View style={styles.engineerAlertSummaryRow}>
+                                    <View style={[styles.miniTag, styles.engineerAlertTag]}>
+                                        <Text style={[styles.miniTagText, { color: Colors.textSecondary }]}>Total {scopedEngineerAlertSummary.total}</Text>
+                                    </View>
+                                    <View style={[styles.miniTag, styles.engineerAlertTag, { borderColor: Colors.danger + '4D' }]}>
+                                        <Text style={[styles.miniTagText, { color: Colors.danger }]}>Kosong {scopedEngineerAlertSummary.empty}</Text>
+                                    </View>
+                                    <View style={[styles.miniTag, styles.engineerAlertTag, { borderColor: Colors.accent + '4D' }]}>
+                                        <Text style={[styles.miniTagText, { color: Colors.accent }]}>Minim {scopedEngineerAlertSummary.low}</Text>
+                                    </View>
                                 </View>
+
+                                <View style={styles.engineerAlertFilterRow}>
+                                    {[
+                                        { key: 'all' as const, label: 'Semua' },
+                                        { key: 'empty' as const, label: 'Kosong' },
+                                        { key: 'low' as const, label: `Minim <${ENGINEER_LOW_STOCK_THRESHOLD}` },
+                                    ].map((option) => {
+                                        const active = engineerAlertFilter === option.key;
+                                        return (
+                                            <Chip
+                                                key={option.key}
+                                                mode={active ? 'flat' : 'outlined'}
+                                                selected={active}
+                                                onPress={() => setEngineerAlertFilter(option.key)}
+                                                style={[styles.monitorWindowChip, active && styles.monitorWindowChipActive]}
+                                                textStyle={[styles.monitorWindowChipText, active && styles.monitorWindowChipTextActive]}
+                                            >
+                                                {option.label}
+                                            </Chip>
+                                        );
+                                    })}
+                                </View>
+
+                                {filteredEngineerStockAlertsByArea.length === 0 ? (
+                                    <Text style={styles.monitorEmptyText}>Tidak ada engineer dengan status ini pada area terpilih.</Text>
+                                ) : (
+                                    <View style={styles.engineerAlertAreaList}>
+                                        {filteredEngineerStockAlertsByArea.map((group) => (
+                                            <View key={group.area} style={styles.engineerAlertAreaCard}>
+                                                <View style={styles.engineerAlertAreaHeader}>
+                                                    <Text style={styles.engineerAlertAreaName}>{group.area}</Text>
+                                                    <View style={styles.engineerAlertAreaCounts}>
+                                                        {group.emptyCount > 0 && (
+                                                            <Text style={[styles.engineerAlertCountText, { color: Colors.danger }]}>Kosong {group.emptyCount}</Text>
+                                                        )}
+                                                        {group.lowCount > 0 && (
+                                                            <Text style={[styles.engineerAlertCountText, { color: Colors.accent }]}>Minim {group.lowCount}</Text>
+                                                        )}
+                                                    </View>
+                                                </View>
+                                                <View style={styles.engineerAlertRows}>
+                                                    {group.alerts.map((alert) => {
+                                                        const isEmpty = alert.status === 'empty';
+                                                        return (
+                                                            <View key={alert.engineerId} style={styles.engineerAlertRow}>
+                                                                <View style={{ flex: 1 }}>
+                                                                    <Text style={styles.engName}>{alert.engineerName}</Text>
+                                                                    <Text style={styles.engId}>ID: {alert.employeeId || '-'}</Text>
+                                                                </View>
+                                                                <View
+                                                                    style={[
+                                                                        styles.engineerAlertStatusBadge,
+                                                                        isEmpty ? styles.engineerAlertStatusEmpty : styles.engineerAlertStatusLow,
+                                                                    ]}
+                                                                >
+                                                                    <Text style={[styles.engineerAlertStatusText, isEmpty ? { color: Colors.danger } : { color: Colors.accent }]}>
+                                                                        {isEmpty ? 'Kosong' : 'Minim'}
+                                                                    </Text>
+                                                                </View>
+                                                                <Text style={[styles.engineerAlertQty, isEmpty ? { color: Colors.danger } : { color: Colors.accent }]}>
+                                                                    Qty {alert.totalQty}
+                                                                </Text>
+                                                            </View>
+                                                        );
+                                                    })}
+                                                </View>
+                                            </View>
+                                        ))}
+                                    </View>
+                                )}
                             </View>
 
                             <View style={[adminStyles.card, { padding: 14, gap: 12 }]}>
@@ -1505,34 +1637,7 @@ const styles = StyleSheet.create({
     statVal: { fontSize: 24, fontWeight: '800', color: Colors.text },
     statLabel: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' },
     monitorCoverageCard: { padding: 14, gap: 12 },
-    coverageAuditBox: {
-        borderWidth: 1,
-        borderColor: Colors.border,
-        borderRadius: 10,
-        padding: 10,
-        gap: 8,
-        backgroundColor: Colors.surface,
-    },
-    coverageAuditTitle: { fontSize: 12, fontWeight: '700', color: Colors.text },
-    coverageAuditHint: { fontSize: 11, color: Colors.textSecondary },
-    coverageAuditToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start' },
-    coverageAuditToggleText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
-    coverageMissingList: { gap: 6 },
-    coverageMissingItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: Colors.border,
-        backgroundColor: Colors.card,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        gap: 8,
-    },
-    coverageMissingName: { flex: 1, fontSize: 12, fontWeight: '600', color: Colors.text },
-    coverageMissingMeta: { fontSize: 11, fontWeight: '600', color: Colors.textMuted, maxWidth: 160 },
-    coverageMissingMore: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic' },
+    engineerAlertCard: { padding: 14, gap: 10 },
 
     monitorEmptyText: { fontSize: 12, color: Colors.textMuted, marginTop: 6 },
 
@@ -1583,6 +1688,47 @@ const styles = StyleSheet.create({
     riskCellMd: { flex: 0.9, textAlign: 'center' },
     riskPartName: { fontSize: 12, fontWeight: '700', color: Colors.text },
     riskPartId: { fontSize: 10, color: Colors.textMuted, marginTop: 2 },
+    engineerAlertSummaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    engineerAlertTag: { backgroundColor: Colors.surface },
+    engineerAlertFilterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+    engineerAlertAreaList: { gap: 8 },
+    engineerAlertAreaCard: {
+        borderWidth: 1,
+        borderColor: Colors.border,
+        borderRadius: 10,
+        backgroundColor: Colors.surface,
+        overflow: 'hidden',
+    },
+    engineerAlertAreaHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.border,
+    },
+    engineerAlertAreaName: { fontSize: 12, fontWeight: '800', color: Colors.text, textTransform: 'uppercase' },
+    engineerAlertAreaCounts: { flexDirection: 'row', gap: 8 },
+    engineerAlertCountText: { fontSize: 11, fontWeight: '700' },
+    engineerAlertRows: { paddingHorizontal: 10, paddingVertical: 8, gap: 8 },
+    engineerAlertRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    engineerAlertStatusBadge: {
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+    },
+    engineerAlertStatusEmpty: {
+        borderColor: Colors.danger + '4D',
+        backgroundColor: Colors.danger + '12',
+    },
+    engineerAlertStatusLow: {
+        borderColor: Colors.accent + '4D',
+        backgroundColor: Colors.accent + '12',
+    },
+    engineerAlertStatusText: { fontSize: 10, fontWeight: '800' },
+    engineerAlertQty: { fontSize: 11, fontWeight: '700' },
 
     // Filter
     filterRow: { flexDirection: 'row', gap: 12 },

@@ -3,6 +3,7 @@ import { View, StyleSheet, FlatList, RefreshControl, useWindowDimensions, Platfo
 import { Text, Searchbar, Chip, IconButton, Portal, Modal, TextInput, Button, Menu, Divider } from 'react-native-paper';
 import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Colors } from '../../src/config/theme';
 import AppSnackbar from '../../src/components/AppSnackbar';
 import { supabase } from '../../src/config/supabase';
@@ -23,6 +24,35 @@ type UserFormState = {
 };
 
 const EMAIL_REGEX = /\S+@\S+\.\S+/;
+const BREACHED_PASSWORD_PATTERNS = ['breached', 'pwned', 'weak password', 'password is known'];
+
+const extractSetPasswordErrorMessage = async (error: unknown) => {
+    if (error instanceof FunctionsHttpError) {
+        try {
+            const payload = (await error.context.json()) as { error?: string; message?: string };
+            const message = (payload.error || payload.message || '').trim();
+            if (message) {
+                const lowered = message.toLowerCase();
+                if (BREACHED_PASSWORD_PATTERNS.some((pattern) => lowered.includes(pattern))) {
+                    return 'Password terlalu lemah atau termasuk password bocor. Gunakan kombinasi yang lebih kuat.';
+                }
+                return message;
+            }
+        } catch {
+            // Fall through to generic handling.
+        }
+    }
+
+    if (error instanceof Error && error.message) {
+        const lowered = error.message.toLowerCase();
+        if (BREACHED_PASSWORD_PATTERNS.some((pattern) => lowered.includes(pattern))) {
+            return 'Password terlalu lemah atau termasuk password bocor. Gunakan kombinasi yang lebih kuat.';
+        }
+        return error.message;
+    }
+
+    return 'Gagal memperbarui password user.';
+};
 
 const mapProfileToForm = (profile: Profile): UserFormState => ({
     name: profile.name || '',
@@ -56,7 +86,7 @@ const setPasswordByAdmin = async (userId: string, password: string) => {
     });
 
     if (error) {
-        throw error;
+        throw new Error(await extractSetPasswordErrorMessage(error));
     }
 
     const payload = (data || {}) as { ok?: boolean; error?: string };

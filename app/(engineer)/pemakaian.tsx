@@ -22,6 +22,8 @@ const SO_NUMBER_MIN_DIGIT_LENGTH = 8; // YYYYMMDD
 const SO_NUMBER_MAX_DIGIT_LENGTH = 20;
 const USAGE_HISTORY_LIMIT = 5;
 const SO_NUMBER_PATTERN = new RegExp(`^\\d{${SO_NUMBER_MIN_DIGIT_LENGTH},${SO_NUMBER_MAX_DIGIT_LENGTH}}$`);
+const STOCK_PAGE_SIZE = 1000;
+const STOCK_MAX_PAGES = 200;
 
 const fetchEngineerUsageReports = async (engineerId: string): Promise<UsageReport[]> => {
     let response: any = await supabase
@@ -42,22 +44,55 @@ const fetchEngineerUsageReports = async (engineerId: string): Promise<UsageRepor
 };
 
 const fetchEngineerUsageStocks = async (engineerId: string): Promise<StockWithName[]> => {
-    const [stockRes, partsRes] = await Promise.all([
-        supabase
-            .from('engineer_stock')
-            .select('engineer_id, part_id, quantity, min_stock, last_sync, created_at, updated_at')
-            .eq('engineer_id', engineerId)
-            .gt('quantity', 0),
-        supabase.from('inventory').select('id, part_name'),
+    const [stockRows, partRows] = await Promise.all([
+        (async () => {
+            const rows: EngineerStock[] = [];
+            for (let page = 0; page < STOCK_MAX_PAGES; page += 1) {
+                const from = page * STOCK_PAGE_SIZE;
+                const to = from + STOCK_PAGE_SIZE - 1;
+                const res = await supabase
+                    .from('engineer_stock')
+                    .select('engineer_id, part_id, quantity, min_stock, last_sync, created_at, updated_at')
+                    .eq('engineer_id', engineerId)
+                    .gt('quantity', 0)
+                    .order('part_id', { ascending: true })
+                    .range(from, to);
+
+                if (res.error) throw res.error;
+
+                const chunk = (res.data || []) as EngineerStock[];
+                rows.push(...chunk);
+                if (chunk.length < STOCK_PAGE_SIZE) return rows;
+            }
+
+            throw new Error(`Data engineer_stock melebihi batas ${STOCK_PAGE_SIZE * STOCK_MAX_PAGES} row.`);
+        })(),
+        (async () => {
+            const rows: { id: string; part_name: string }[] = [];
+            for (let page = 0; page < STOCK_MAX_PAGES; page += 1) {
+                const from = page * STOCK_PAGE_SIZE;
+                const to = from + STOCK_PAGE_SIZE - 1;
+                const res = await supabase
+                    .from('inventory')
+                    .select('id, part_name')
+                    .order('id', { ascending: true })
+                    .range(from, to);
+
+                if (res.error) throw res.error;
+
+                const chunk = (res.data || []) as { id: string; part_name: string }[];
+                rows.push(...chunk);
+                if (chunk.length < STOCK_PAGE_SIZE) return rows;
+            }
+
+            throw new Error(`Data inventory melebihi batas ${STOCK_PAGE_SIZE * STOCK_MAX_PAGES} row.`);
+        })(),
     ]);
 
-    if (stockRes.error) throw stockRes.error;
-    if (partsRes.error) throw partsRes.error;
-
     const partsMap: Record<string, string> = {};
-    (partsRes.data || []).forEach((p) => { partsMap[p.id] = p.part_name; });
+    partRows.forEach((p) => { partsMap[p.id] = p.part_name; });
 
-    return (stockRes.data || []).map((s) => ({ ...s, part_name: partsMap[s.part_id] || s.part_id }));
+    return stockRows.map((s) => ({ ...s, part_name: partsMap[s.part_id] || s.part_id }));
 };
 
 const hasValidSoDatePrefix = (value: string): boolean => {

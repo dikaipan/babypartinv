@@ -28,23 +28,67 @@ type EngineerStockData = {
     partsRows: InventoryPart[];
 };
 
-const fetchEngineerStockData = async (engineerId: string): Promise<EngineerStockData> => {
-    const [stockRes, partsRes] = await Promise.all([
-        supabase
+const ENGINEER_STOCK_PAGE_SIZE = 1000;
+const ENGINEER_STOCK_MAX_PAGES = 200;
+
+const fetchAllEngineerStockRows = async (engineerId: string): Promise<EngineerStock[]> => {
+    const rows: EngineerStock[] = [];
+
+    for (let page = 0; page < ENGINEER_STOCK_MAX_PAGES; page += 1) {
+        const from = page * ENGINEER_STOCK_PAGE_SIZE;
+        const to = from + ENGINEER_STOCK_PAGE_SIZE - 1;
+        const res = await supabase
             .from('engineer_stock')
             .select('engineer_id, part_id, quantity, min_stock, last_sync, created_at, updated_at')
-            .eq('engineer_id', engineerId),
-        supabase
+            .eq('engineer_id', engineerId)
+            .order('part_id', { ascending: true })
+            .range(from, to);
+
+        if (res.error) throw res.error;
+
+        const chunk = (res.data || []) as EngineerStock[];
+        rows.push(...chunk);
+        if (chunk.length < ENGINEER_STOCK_PAGE_SIZE) return rows;
+    }
+
+    throw new Error(
+        `Data engineer_stock melebihi batas ${ENGINEER_STOCK_PAGE_SIZE * ENGINEER_STOCK_MAX_PAGES} row.`
+    );
+};
+
+const fetchAllInventoryRows = async (): Promise<InventoryPart[]> => {
+    const rows: InventoryPart[] = [];
+
+    for (let page = 0; page < ENGINEER_STOCK_MAX_PAGES; page += 1) {
+        const from = page * ENGINEER_STOCK_PAGE_SIZE;
+        const to = from + ENGINEER_STOCK_PAGE_SIZE - 1;
+        const res = await supabase
             .from('inventory')
-            .select('id, part_name, total_stock, min_stock'),
+            .select('id, part_name, total_stock, min_stock')
+            .order('id', { ascending: true })
+            .range(from, to);
+
+        if (res.error) throw res.error;
+
+        const chunk = (res.data || []) as InventoryPart[];
+        rows.push(...chunk);
+        if (chunk.length < ENGINEER_STOCK_PAGE_SIZE) return rows;
+    }
+
+    throw new Error(
+        `Data inventory melebihi batas ${ENGINEER_STOCK_PAGE_SIZE * ENGINEER_STOCK_MAX_PAGES} row.`
+    );
+};
+
+const fetchEngineerStockData = async (engineerId: string): Promise<EngineerStockData> => {
+    const [stockRows, partsRows] = await Promise.all([
+        fetchAllEngineerStockRows(engineerId),
+        fetchAllInventoryRows(),
     ]);
 
-    if (stockRes.error) throw stockRes.error;
-    if (partsRes.error) throw partsRes.error;
-
     return {
-        stockRows: stockRes.data || [],
-        partsRows: partsRes.data || [],
+        stockRows,
+        partsRows,
     };
 };
 

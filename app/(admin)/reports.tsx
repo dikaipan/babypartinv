@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, LayoutAnimation, Platform, UIManager, Modal, Share, FlatList } from 'react-native';
+import { View, StyleSheet, ScrollView, RefreshControl, Pressable, useWindowDimensions, LayoutAnimation, Platform, UIManager, Modal, Share, FlatList, Alert } from 'react-native';
 import { Text, Chip, Searchbar, Button, SegmentedButtons } from 'react-native-paper';
 import { useQuery } from '@tanstack/react-query';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -477,6 +477,8 @@ export default function ReportsPage() {
     const [expandedAreas, setExpandedAreas] = useState<Set<string>>(new Set());
     const [showMissingStockList, setShowMissingStockList] = useState(false);
     const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
+    const [deletingEngineerIds, setDeletingEngineerIds] = useState<Set<string>>(new Set());
     const reportsQuery = useQuery({
         queryKey: ['admin', 'reports'],
         queryFn: fetchReportsData,
@@ -514,6 +516,77 @@ export default function ReportsPage() {
             setRefreshing(false);
         }
     };
+
+    const setEngineerDeleteState = useCallback((engineerId: string, isDeleting: boolean) => {
+        setDeletingEngineerIds((prev) => {
+            const next = new Set(prev);
+            if (isDeleting) next.add(engineerId);
+            else next.delete(engineerId);
+            return next;
+        });
+    }, []);
+
+    const deleteEngineerAccount = useCallback(async (engineer: EngineerWithStock) => {
+        const engineerId = engineer.profile.id;
+        if (!engineerId || deletingEngineerIds.has(engineerId)) return;
+
+        setEngineerDeleteState(engineerId, true);
+        try {
+            const cleanupOps = [
+                supabase.from('engineer_stock').delete().eq('engineer_id', engineerId),
+                supabase.from('usage_reports').delete().eq('engineer_id', engineerId),
+                supabase.from('monthly_requests').delete().eq('engineer_id', engineerId),
+                supabase.from('notifications').delete().eq('user_id', engineerId),
+            ];
+
+            for (const operation of cleanupOps) {
+                const { error: cleanupError } = await operation;
+                if (cleanupError) throw cleanupError;
+            }
+
+            const { error: profileDeleteError } = await supabase
+                .from('profiles')
+                .delete()
+                .eq('id', engineerId);
+            if (profileDeleteError) throw profileDeleteError;
+
+            await reportsQuery.refetch();
+            setSuccess(`Akun ${engineer.profile.name} berhasil dihapus.`);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Gagal menghapus akun engineer.';
+            setError(message);
+        } finally {
+            setEngineerDeleteState(engineerId, false);
+        }
+    }, [deletingEngineerIds, reportsQuery, setEngineerDeleteState]);
+
+    const confirmDeleteEngineer = useCallback((engineer: EngineerWithStock) => {
+        const name = engineer.profile.name || 'Engineer';
+        const empId = engineer.profile.employee_id || '-';
+        const message = `Hapus akun ${name} (ID: ${empId})?\nData stok, request, pemakaian, dan notifikasi akun ini juga akan ikut dihapus.`;
+
+        const webConfirm = (globalThis as any)?.confirm;
+        if (Platform.OS === 'web' && typeof webConfirm === 'function') {
+            const approved = webConfirm(message);
+            if (approved) {
+                void deleteEngineerAccount(engineer);
+            }
+            return;
+        }
+
+        Alert.alert(
+            'Konfirmasi Hapus Akun',
+            message,
+            [
+                { text: 'Batal', style: 'cancel' },
+                {
+                    text: 'Hapus',
+                    style: 'destructive',
+                    onPress: () => { void deleteEngineerAccount(engineer); }
+                },
+            ]
+        );
+    }, [deleteEngineerAccount]);
 
     // Build part name lookup
     const partNameMap = useMemo(() => {
@@ -1039,6 +1112,7 @@ export default function ReportsPage() {
                     <View style={styles.engineerList}>
                         {group.engineers.map(eng => {
                             const missingParts = getMissingParts(eng);
+                            const isDeleting = deletingEngineerIds.has(eng.profile.id);
                             return (
                                 <View key={eng.profile.id} style={styles.engineerRow}>
                                     <View style={styles.engineerHeader}>
@@ -1054,10 +1128,26 @@ export default function ReportsPage() {
                                                 <Text style={styles.engId}>ID: {eng.profile.employee_id || '-'}</Text>
                                             </View>
                                         </View>
-                                        <View style={[styles.engQtyBadge, eng.totalQty === 0 && { backgroundColor: Colors.danger + '15', borderColor: Colors.danger + '40' }]}>
-                                            <Text style={[styles.engQtyText, eng.totalQty === 0 && { color: Colors.danger }]}>
-                                                {eng.totalQty === 0 ? 'Kosong' : `${eng.stocks.length}/${eng.stocks.length + eng.missingCount} Part`}
-                                            </Text>
+                                        <View style={styles.engineerHeaderRight}>
+                                            <View style={[styles.engQtyBadge, eng.totalQty === 0 && { backgroundColor: Colors.danger + '15', borderColor: Colors.danger + '40' }]}>
+                                                <Text style={[styles.engQtyText, eng.totalQty === 0 && { color: Colors.danger }]}>
+                                                    {eng.totalQty === 0 ? 'Kosong' : `${eng.stocks.length}/${eng.stocks.length + eng.missingCount} Part`}
+                                                </Text>
+                                            </View>
+                                            <Pressable
+                                                style={[styles.deleteAccountButton, isDeleting && styles.deleteAccountButtonDisabled]}
+                                                onPress={() => confirmDeleteEngineer(eng)}
+                                                disabled={isDeleting}
+                                            >
+                                                <MaterialCommunityIcons
+                                                    name={isDeleting ? 'loading' : 'trash-can-outline'}
+                                                    size={13}
+                                                    color={Colors.danger}
+                                                />
+                                                <Text style={[styles.deleteAccountText, isDeleting && styles.deleteAccountTextDisabled]}>
+                                                    {isDeleting ? 'Menghapus...' : 'Hapus Akun'}
+                                                </Text>
+                                            </Pressable>
                                         </View>
                                     </View>
 
@@ -1102,7 +1192,7 @@ export default function ReportsPage() {
                 )}
             </View>
         );
-    }, [expandedAreas, getMissingParts]);
+    }, [confirmDeleteEngineer, deletingEngineerIds, expandedAreas, getMissingParts]);
 
     const renderDeliveryItem = useCallback(({ item: d }: { item: any }) => (
         <View style={adminStyles.card}>
@@ -1439,6 +1529,9 @@ export default function ReportsPage() {
             <AppSnackbar visible={!!error} onDismiss={() => setError('')} duration={3200} style={{ backgroundColor: Colors.danger }}>
                 {error}
             </AppSnackbar>
+            <AppSnackbar visible={!!success} onDismiss={() => setSuccess('')} duration={2600} style={{ backgroundColor: Colors.success }}>
+                {success}
+            </AppSnackbar>
         </View>
     );
 }
@@ -1599,6 +1692,10 @@ const styles = StyleSheet.create({
     engineerHeader: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     },
+    engineerHeaderRight: {
+        alignItems: 'flex-end',
+        gap: 6,
+    },
     engAvatar: {
         width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.primary + '15',
         borderWidth: 1, borderColor: Colors.primary + '30',
@@ -1611,6 +1708,28 @@ const styles = StyleSheet.create({
         borderRadius: 8, borderWidth: 1, borderColor: Colors.primary + '30',
     },
     engQtyText: { fontSize: 11, fontWeight: '700', color: Colors.primary },
+    deleteAccountButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        borderWidth: 1,
+        borderColor: Colors.danger + '4D',
+        backgroundColor: Colors.danger + '12',
+        borderRadius: 7,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    deleteAccountButtonDisabled: {
+        opacity: 0.7,
+    },
+    deleteAccountText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: Colors.danger,
+    },
+    deleteAccountTextDisabled: {
+        color: Colors.textMuted,
+    },
 
     // Stock chips
     stockChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },

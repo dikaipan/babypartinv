@@ -122,7 +122,35 @@ let initPromise: Promise<void> | null = null;
 let webWakeCleanup: (() => void) | null = null;
 let sessionRefreshPromise: Promise<void> | null = null;
 
+const isInvalidRefreshTokenError = (error: unknown) => {
+    const message =
+        error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+                ? error
+                : '';
+
+    const normalized = message.toLowerCase();
+    return (
+        normalized.includes('invalid refresh token') ||
+        normalized.includes('refresh token not found')
+    );
+};
+
 export const useAuthStore = create<AuthState>((set, get) => {
+    const clearLocalSessionAfterAuthFailure = async (reason: unknown) => {
+        if (!isInvalidRefreshTokenError(reason)) return false;
+
+        try {
+            await supabase.auth.signOut({ scope: 'local' });
+        } catch {
+            // Ignore cleanup errors; state reset below is authoritative for app UI.
+        }
+
+        set({ session: null, user: null, initialized: true, isRecovery: false });
+        return true;
+    };
+
     const syncProfileForSession = async (
         session: any | null,
         seed?: ProfileSeed,
@@ -210,7 +238,10 @@ export const useAuthStore = create<AuthState>((set, get) => {
                     clearUserOnError: false,
                 });
             } catch (error) {
-                console.error('[auth.web] Failed to recover session:', error);
+                const handled = await clearLocalSessionAfterAuthFailure(error);
+                if (!handled) {
+                    console.error('[auth.web] Failed to recover session:', error);
+                }
             }
         })().finally(() => {
             sessionRefreshPromise = null;
@@ -317,8 +348,11 @@ export const useAuthStore = create<AuthState>((set, get) => {
                         adoptSession: true,
                     });
                 } catch (error) {
-                    console.error('[auth.init] Failed to initialize auth session:', error);
-                    set({ session: null, user: null, initialized: true });
+                    const handled = await clearLocalSessionAfterAuthFailure(error);
+                    if (!handled) {
+                        console.error('[auth.init] Failed to initialize auth session:', error);
+                        set({ session: null, user: null, initialized: true });
+                    }
                 }
 
                 setupAuthSubscription();

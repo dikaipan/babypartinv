@@ -51,22 +51,12 @@ export const NotificationService = {
             userIds = users.map(u => u.id);
         }
 
-        console.log(`[Broadcast] Target: ${target}, Database User Count: ${userIds.length}`);
+        // console.log(`[Broadcast] Target: ${target}, Database User Count: ${userIds.length}`);
 
         if (target === 'all') {
-            const [pushResult, logResult] = await Promise.allSettled([
-                sendNotification(title, body, { segments: ['Active Users', 'Subscribed Users'] }),
-                userIds.length > 0 ? logNotification(userIds, title, body) : Promise.resolve(),
-            ]);
-
-            if (logResult.status === 'rejected') {
-                console.error('[Broadcast] DB log error:', logResult.reason);
-            }
-            if (pushResult.status === 'rejected') {
-                console.error('[Broadcast] Push error:', pushResult.reason);
-                return null;
-            }
-            return pushResult.value;
+            if (userIds.length === 0) return null;
+            // Avoid dependency on OneSignal dashboard segment names.
+            return await dispatchNotification(userIds, title, body, { externalIds: userIds }, undefined, 'broadcast');
         } else {
             return await NotificationService.sendToRole(target, title, body);
         }
@@ -124,5 +114,5 @@ async function logNotification(userIds: string[], title: string, body: string, d
         console.error('[logNotification] Insert error:', error);
         throw error;
     }
-    console.log(`[logNotification] Successfully logged to DB for ${userIds.length} recipients.`);
+    // console.log(`[logNotification] Successfully logged to DB for ${userIds.length} recipients.`);
 }

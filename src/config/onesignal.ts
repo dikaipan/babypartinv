@@ -334,7 +334,8 @@ const buildPushGatewayUrls = (rawUrl: string): string[] => {
 
         if (projectRef) {
             pushUnique(`https://${projectRef}.supabase.co/functions/v1/push-gateway`);
-            // pushUnique(`https://${projectRef}.functions.supabase.co/push-gateway`);
+            pushUnique(`https://${projectRef}.functions.supabase.co/push-gateway`);
+            pushUnique(trimmed);
             return urls;
         }
     } catch {

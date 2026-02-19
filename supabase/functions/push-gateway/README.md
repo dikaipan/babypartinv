@@ -12,6 +12,8 @@ Function ini menerima request push dari app (pakai bearer token Supabase), lalu 
 ## Secret opsional (direkomendasikan)
 - `ONESIGNAL_APP_ID`
   - Jika diset, `appId` dari payload client akan diabaikan/ditolak bila tidak cocok.
+- `ONESIGNAL_LARGE_ICON_URL`
+  - URL publik gambar logo untuk ikon besar notifikasi Android (bagian kiri). Jika diset, nilai ini diprioritaskan dibanding resource lokal.
 
 ## Deploy
 ```bash

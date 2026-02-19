@@ -18,11 +18,16 @@ type OneSignalPayload = {
     headings: { en: string };
     contents: { en: string };
     data?: unknown;
+    small_icon?: string;
+    large_icon?: string;
     include_aliases?: { external_id?: string[] };
     include_player_ids?: string[];
     included_segments?: string[];
     target_channel?: 'push';
 };
+
+const DEFAULT_ANDROID_SMALL_ICON = 'ic_stat_onesignal_default';
+const DEFAULT_ANDROID_LARGE_ICON = 'ic_onesignal_large_icon_default';
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -56,7 +61,11 @@ const sanitizeIds = (value: unknown, maxItems: number) => {
         .slice(0, maxItems);
 };
 
-const buildOneSignalPayload = (req: PushRequest, configuredAppId?: string): OneSignalPayload => {
+const buildOneSignalPayload = (
+    req: PushRequest,
+    configuredAppId?: string,
+    configuredLargeIconUrl?: string,
+): OneSignalPayload => {
     const headings = { en: normalizeText(req.title, 120) };
     const contents = { en: normalizeText(req.body, 2000) };
     const forcedAppId = normalizeText(configuredAppId, 100);
@@ -77,6 +86,8 @@ const buildOneSignalPayload = (req: PushRequest, configuredAppId?: string): OneS
         app_id: appId,
         headings,
         contents,
+        small_icon: DEFAULT_ANDROID_SMALL_ICON,
+        large_icon: normalizeText(configuredLargeIconUrl, 1000) || DEFAULT_ANDROID_LARGE_ICON,
     };
 
     if (req.data !== undefined) {
@@ -130,6 +141,7 @@ Deno.serve(async (req: Request) => {
         const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
         const oneSignalApiKey = Deno.env.get('ONESIGNAL_REST_API_KEY');
         const oneSignalAppId = Deno.env.get('ONESIGNAL_APP_ID');
+        const oneSignalLargeIconUrl = Deno.env.get('ONESIGNAL_LARGE_ICON_URL');
 
         if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey || !oneSignalApiKey) {
             return json(500, { error: 'Secret function belum lengkap di environment.' });
@@ -156,7 +168,7 @@ Deno.serve(async (req: Request) => {
         let payload: OneSignalPayload;
         try {
             const body = (await req.json()) as PushRequest;
-            payload = buildOneSignalPayload(body, oneSignalAppId);
+            payload = buildOneSignalPayload(body, oneSignalAppId, oneSignalLargeIconUrl);
         } catch (error) {
             return json(400, { error: error instanceof Error ? error.message : 'Payload tidak valid.' });
         }

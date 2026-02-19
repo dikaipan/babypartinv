@@ -27,7 +27,7 @@
       ]
     },
     "notification": {
-      "icon": "./assets/logo.png",
+      "icon": "./assets/ic_stat_onesignal_default.png",
       "color": "#ffffff"
     },
     "web": {
@@ -35,17 +35,20 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router",
-      "expo-secure-store",
       [
         "onesignal-expo-plugin",
         {
-          "mode": "development",
+          "mode": "production",
           "smallIcons": [
+            "./assets/ic_stat_onesignal_default.png"
+          ],
+          "largeIcons": [
             "./assets/logo.png"
           ]
         }
-      ]
+      ],
+      "expo-router",
+      "expo-secure-store"
     ]
   }
 }

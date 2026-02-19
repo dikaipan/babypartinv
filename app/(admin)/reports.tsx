@@ -168,8 +168,8 @@ type AdjustmentRow = {
 
 const fetchRecentStockAdjustments = async (): Promise<{ data: AdjustmentRow[]; error: any }> => {
     const selectVariants = [
-        'id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp',
         'id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, timestamp',
+        'id, engineer_id, engineer_name, part_id, part_name, previous_quantity, new_quantity, delta, reason, notes, timestamp',
         'id, part_id, part_name, previous_quantity, new_quantity, delta, reason, timestamp',
     ];
 

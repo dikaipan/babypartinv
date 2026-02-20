@@ -35,6 +35,8 @@ type CreateUserFormState = UserBaseFormState & {
 const EMAIL_REGEX = /\S+@\S+\.\S+/;
 const BREACHED_PASSWORD_PATTERNS = ['breached', 'pwned', 'weak password', 'password is known'];
 const EMAIL_CONFLICT_PATTERNS = ['already registered', 'already exists', 'duplicate key value'];
+const ADMIN_FUNCTION_WEB_401_HINT =
+    'Jika ini terjadi di web, redeploy edge function dengan --no-verify-jwt agar preflight OPTIONS tidak ditolak.';
 
 const toTitleCase = (value: string) =>
     value.replace(/\w\S*/g, (text) => text.charAt(0).toUpperCase() + text.substring(1).toLowerCase());
@@ -52,6 +54,7 @@ const buildDefaultCreateUserForm = (): CreateUserFormState => ({
 
 const extractAdminAuthErrorMessage = async (error: unknown, fallback: string) => {
     if (error instanceof FunctionsHttpError) {
+        const status = error.context.status;
         try {
             const payload = (await error.context.json()) as { error?: string; message?: string };
             const message = (payload.error || payload.message || '').trim();
@@ -63,10 +66,23 @@ const extractAdminAuthErrorMessage = async (error: unknown, fallback: string) =>
                 if (EMAIL_CONFLICT_PATTERNS.some((pattern) => lowered.includes(pattern))) {
                     return 'Email sudah terpakai oleh akun lain.';
                 }
+                if (status === 401) {
+                    return `${message} ${ADMIN_FUNCTION_WEB_401_HINT}`;
+                }
+                if (status === 403) {
+                    return 'Akses ditolak. Hanya akun admin yang boleh menjalankan aksi ini.';
+                }
                 return message;
             }
         } catch {
             // Fall through to generic handling.
+        }
+
+        if (status === 401) {
+            return `Token login tidak valid/expired atau preflight ditolak. ${ADMIN_FUNCTION_WEB_401_HINT}`;
+        }
+        if (status === 403) {
+            return 'Akses ditolak. Hanya akun admin yang boleh menjalankan aksi ini.';
         }
     }
 
@@ -78,10 +94,43 @@ const extractAdminAuthErrorMessage = async (error: unknown, fallback: string) =>
         if (EMAIL_CONFLICT_PATTERNS.some((pattern) => lowered.includes(pattern))) {
             return 'Email sudah terpakai oleh akun lain.';
         }
+        if (lowered.includes('failed to fetch')) {
+            return `Request ke admin function gagal. ${ADMIN_FUNCTION_WEB_401_HINT}`;
+        }
         return error.message;
     }
 
     return fallback;
+};
+
+const getFreshAccessToken = async () => {
+    const {
+        data: { session },
+        error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+        throw new Error('Gagal membaca sesi login. Silakan login ulang.');
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const expiresInSeconds = session?.expires_at ? session.expires_at - now : null;
+    const needsRefresh = !session?.access_token || expiresInSeconds === null || expiresInSeconds <= 60;
+
+    if (needsRefresh) {
+        const {
+            data: refreshed,
+            error: refreshError,
+        } = await supabase.auth.refreshSession();
+
+        if (refreshError || !refreshed.session?.access_token) {
+            throw new Error('Sesi login tidak valid atau sudah berakhir. Silakan login ulang.');
+        }
+
+        return refreshed.session.access_token;
+    }
+
+    return session.access_token;
 };
 
 const mapProfileToForm = (profile: Profile): UserFormState => ({
@@ -109,15 +158,12 @@ const updateUserAuthByAdmin = async (
         email?: string;
     },
 ) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-        throw new Error('Sesi login tidak valid. Silakan login ulang.');
-    }
+    const accessToken = await getFreshAccessToken();
 
     const { data, error } = await supabase.functions.invoke('admin-set-password', {
         body: { userId, ...updates },
         headers: {
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${accessToken}`,
         },
     });
 
@@ -140,15 +186,12 @@ const createUserByAdmin = async (payload: {
     role: 'admin' | 'engineer';
     is_active: boolean;
 }) => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session?.access_token) {
-        throw new Error('Sesi login tidak valid. Silakan login ulang.');
-    }
+    const accessToken = await getFreshAccessToken();
 
     const { data, error } = await supabase.functions.invoke('admin-create-user', {
         body: payload,
         headers: {
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${accessToken}`,
         },
     });
 

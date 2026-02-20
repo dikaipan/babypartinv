@@ -14,8 +14,9 @@ import { useSupabaseRealtimeRefresh } from '../../src/hooks/useSupabaseRealtimeR
 import { adminStyles } from '../../src/styles/adminStyles';
 import { useAdminUiStore, ADMIN_SIDEBAR_WIDTH, ADMIN_SIDEBAR_COLLAPSED_WIDTH } from '../../src/stores/adminUiStore';
 import { useDebounce } from '../../src/hooks/useDebounce';
+import { normalizeArea } from '../../src/utils/normalizeArea';
 
-type UserFormState = {
+type UserBaseFormState = {
     name: string;
     email: string;
     employee_id: string;
@@ -24,11 +25,32 @@ type UserFormState = {
     is_active: boolean;
 };
 
+type UserFormState = UserBaseFormState;
+
+type CreateUserFormState = UserBaseFormState & {
+    password: string;
+    confirm_password: string;
+};
+
 const EMAIL_REGEX = /\S+@\S+\.\S+/;
 const BREACHED_PASSWORD_PATTERNS = ['breached', 'pwned', 'weak password', 'password is known'];
 const EMAIL_CONFLICT_PATTERNS = ['already registered', 'already exists', 'duplicate key value'];
 
-const extractAdminAuthUpdateErrorMessage = async (error: unknown) => {
+const toTitleCase = (value: string) =>
+    value.replace(/\w\S*/g, (text) => text.charAt(0).toUpperCase() + text.substring(1).toLowerCase());
+
+const buildDefaultCreateUserForm = (): CreateUserFormState => ({
+    name: '',
+    email: '',
+    password: '',
+    confirm_password: '',
+    employee_id: '',
+    location: '',
+    role: 'engineer',
+    is_active: true,
+});
+
+const extractAdminAuthErrorMessage = async (error: unknown, fallback: string) => {
     if (error instanceof FunctionsHttpError) {
         try {
             const payload = (await error.context.json()) as { error?: string; message?: string };
@@ -59,7 +81,7 @@ const extractAdminAuthUpdateErrorMessage = async (error: unknown) => {
         return error.message;
     }
 
-    return 'Gagal memperbarui data login user.';
+    return fallback;
 };
 
 const mapProfileToForm = (profile: Profile): UserFormState => ({
@@ -100,12 +122,43 @@ const updateUserAuthByAdmin = async (
     });
 
     if (error) {
-        throw new Error(await extractAdminAuthUpdateErrorMessage(error));
+        throw new Error(await extractAdminAuthErrorMessage(error, 'Gagal memperbarui data login user.'));
     }
 
     const payload = (data || {}) as { ok?: boolean; error?: string };
     if (!payload.ok) {
         throw new Error(payload.error || 'Gagal memperbarui data login user.');
+    }
+};
+
+const createUserByAdmin = async (payload: {
+    name: string;
+    email: string;
+    password: string;
+    employee_id?: string | null;
+    location?: string | null;
+    role: 'admin' | 'engineer';
+    is_active: boolean;
+}) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+        throw new Error('Sesi login tidak valid. Silakan login ulang.');
+    }
+
+    const { data, error } = await supabase.functions.invoke('admin-create-user', {
+        body: payload,
+        headers: {
+            Authorization: `Bearer ${session.access_token}`,
+        },
+    });
+
+    if (error) {
+        throw new Error(await extractAdminAuthErrorMessage(error, 'Gagal membuat user baru.'));
+    }
+
+    const responsePayload = (data || {}) as { ok?: boolean; error?: string };
+    if (!responsePayload.ok) {
+        throw new Error(responsePayload.error || 'Gagal membuat user baru.');
     }
 };
 
@@ -121,6 +174,7 @@ export default function UsersPage() {
     const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
     const [showManageModal, setShowManageModal] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [showCreateModal, setShowCreateModal] = useState(false);
 
     const [userForm, setUserForm] = useState<UserFormState>({
         name: '',
@@ -134,7 +188,11 @@ export default function UsersPage() {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showNewPassword, setShowNewPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    const [createUserForm, setCreateUserForm] = useState<CreateUserFormState>(buildDefaultCreateUserForm());
+    const [showCreatePassword, setShowCreatePassword] = useState(false);
+    const [showCreateConfirmPassword, setShowCreateConfirmPassword] = useState(false);
 
+    const [creatingUser, setCreatingUser] = useState(false);
     const [savingUser, setSavingUser] = useState(false);
     const [sendingReset, setSendingReset] = useState(false);
     const [savingPassword, setSavingPassword] = useState(false);
@@ -199,6 +257,75 @@ export default function UsersPage() {
         setConfirmPassword('');
         setShowNewPassword(false);
         setShowConfirmPassword(false);
+    };
+
+    const openCreateModal = () => {
+        setCreateUserForm(buildDefaultCreateUserForm());
+        setShowCreatePassword(false);
+        setShowCreateConfirmPassword(false);
+        setShowCreateModal(true);
+    };
+
+    const closeCreateModal = () => {
+        setShowCreateModal(false);
+        setCreateUserForm(buildDefaultCreateUserForm());
+        setShowCreatePassword(false);
+        setShowCreateConfirmPassword(false);
+    };
+
+    const addUser = async () => {
+        if (creatingUser) return;
+
+        const name = toTitleCase(createUserForm.name.trim());
+        const email = createUserForm.email.trim().toLowerCase();
+        const password = createUserForm.password.trim();
+        const confirmation = createUserForm.confirm_password.trim();
+        const employeeId = createUserForm.employee_id.trim();
+        const location = createUserForm.location.trim();
+        const isEngineer = createUserForm.role === 'engineer';
+
+        if (!name || !email || !password || !confirmation) {
+            setError('Nama, email, password, dan konfirmasi password wajib diisi.');
+            return;
+        }
+        if (!EMAIL_REGEX.test(email)) {
+            setError('Format email tidak valid.');
+            return;
+        }
+        if (password.length < 6) {
+            setError('Password minimal 6 karakter.');
+            return;
+        }
+        if (password !== confirmation) {
+            setError('Konfirmasi password tidak cocok.');
+            return;
+        }
+        if (isEngineer && (!employeeId || !location)) {
+            setError('ID Engineer dan Area Group wajib diisi untuk role engineer.');
+            return;
+        }
+
+        setCreatingUser(true);
+        try {
+            await createUserByAdmin({
+                name,
+                email,
+                password,
+                employee_id: employeeId || null,
+                location: location ? normalizeArea(location) : null,
+                role: createUserForm.role,
+                is_active: createUserForm.is_active,
+            });
+
+            await usersQuery.refetch();
+            setSuccess(`User ${name} berhasil ditambahkan.`);
+            closeCreateModal();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Gagal menambahkan user baru.';
+            setError(message);
+        } finally {
+            setCreatingUser(false);
+        }
     };
 
     const saveUser = async () => {
@@ -274,7 +401,7 @@ export default function UsersPage() {
                 redirectTo: `${baseUrl}/reset-password.html`,
             });
             if (resetError) throw resetError;
-            setSuccess(`Email reset password berhasil dikirim ke ${targetEmail}.`);
+            setSuccess(`Permintaan reset password untuk ${targetEmail} sudah diproses. Jika email belum masuk, cek spam atau gunakan reset manual.`);
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Gagal mengirim reset password.';
             setError(message);
@@ -408,9 +535,14 @@ export default function UsersPage() {
                     <Text style={adminStyles.headerTitle}>Users</Text>
                     <Text style={adminStyles.headerSub}>{users.length} total users</Text>
                 </View>
-                <Button mode="outlined" icon="refresh" onPress={onRefresh} compact>
-                    Reload
-                </Button>
+                <View style={styles.headerActions}>
+                    <Button mode="contained" icon="account-plus-outline" onPress={openCreateModal} compact>
+                        Add User
+                    </Button>
+                    <Button mode="outlined" icon="refresh" onPress={onRefresh} compact>
+                        Reload
+                    </Button>
+                </View>
             </View>
 
             <View style={adminStyles.controls}>
@@ -483,6 +615,137 @@ export default function UsersPage() {
             />
 
             <Portal>
+                <Modal
+                    visible={showCreateModal}
+                    onDismiss={closeCreateModal}
+                    contentContainerStyle={[styles.modal, { maxHeight: Math.max(460, height - 40) }]}
+                >
+                    <View style={styles.modalHeader}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.modalTitle}>Tambah User</Text>
+                            <Text style={styles.modalCaption}>
+                                Registrasi manual user dari panel admin.
+                            </Text>
+                        </View>
+                        <IconButton icon="close" size={22} onPress={closeCreateModal} />
+                    </View>
+                    <ScrollView
+                        style={styles.modalScroll}
+                        showsVerticalScrollIndicator={false}
+                        indicatorStyle="black"
+                        keyboardShouldPersistTaps="handled"
+                        contentContainerStyle={styles.modalContent}
+                    >
+                        <TextInput
+                            label="Nama"
+                            value={createUserForm.name}
+                            onChangeText={(value) => setCreateUserForm((prev) => ({ ...prev, name: value }))}
+                            mode="outlined"
+                            style={styles.input}
+                        />
+                        <TextInput
+                            label="Email"
+                            value={createUserForm.email}
+                            onChangeText={(value) => setCreateUserForm((prev) => ({ ...prev, email: value }))}
+                            mode="outlined"
+                            autoCapitalize="none"
+                            keyboardType="email-address"
+                            style={styles.input}
+                        />
+                        <TextInput
+                            label="Password"
+                            value={createUserForm.password}
+                            onChangeText={(value) => setCreateUserForm((prev) => ({ ...prev, password: value }))}
+                            secureTextEntry={!showCreatePassword}
+                            right={
+                                <TextInput.Icon
+                                    icon={showCreatePassword ? 'eye-off' : 'eye'}
+                                    onPress={() => setShowCreatePassword((prev) => !prev)}
+                                    forceTextInputFocus={false}
+                                />
+                            }
+                            mode="outlined"
+                            style={styles.input}
+                        />
+                        <TextInput
+                            label="Konfirmasi Password"
+                            value={createUserForm.confirm_password}
+                            onChangeText={(value) => setCreateUserForm((prev) => ({ ...prev, confirm_password: value }))}
+                            secureTextEntry={!showCreateConfirmPassword}
+                            right={
+                                <TextInput.Icon
+                                    icon={showCreateConfirmPassword ? 'eye-off' : 'eye'}
+                                    onPress={() => setShowCreateConfirmPassword((prev) => !prev)}
+                                    forceTextInputFocus={false}
+                                />
+                            }
+                            mode="outlined"
+                            style={styles.input}
+                        />
+                        <TextInput
+                            label="ID Engineer"
+                            value={createUserForm.employee_id}
+                            onChangeText={(value) => setCreateUserForm((prev) => ({ ...prev, employee_id: value }))}
+                            mode="outlined"
+                            style={styles.input}
+                        />
+                        <TextInput
+                            label="Area Group"
+                            value={createUserForm.location}
+                            onChangeText={(value) => setCreateUserForm((prev) => ({ ...prev, location: value }))}
+                            mode="outlined"
+                            style={styles.input}
+                        />
+
+                        <View style={styles.optionRow}>
+                            <Chip
+                                mode={createUserForm.role === 'engineer' ? 'flat' : 'outlined'}
+                                selected={createUserForm.role === 'engineer'}
+                                onPress={() => setCreateUserForm((prev) => ({ ...prev, role: 'engineer' }))}
+                                style={[styles.optionChip, createUserForm.role === 'engineer' && styles.optionChipActive]}
+                                textStyle={[styles.optionText, createUserForm.role === 'engineer' && styles.optionTextActive]}
+                            >
+                                Engineer
+                            </Chip>
+                            <Chip
+                                mode={createUserForm.role === 'admin' ? 'flat' : 'outlined'}
+                                selected={createUserForm.role === 'admin'}
+                                onPress={() => setCreateUserForm((prev) => ({ ...prev, role: 'admin' }))}
+                                style={[styles.optionChip, createUserForm.role === 'admin' && styles.optionChipActive]}
+                                textStyle={[styles.optionText, createUserForm.role === 'admin' && styles.optionTextActive]}
+                            >
+                                Admin
+                            </Chip>
+                            <Chip
+                                mode={createUserForm.is_active ? 'flat' : 'outlined'}
+                                selected={createUserForm.is_active}
+                                onPress={() => setCreateUserForm((prev) => ({ ...prev, is_active: !prev.is_active }))}
+                                style={[styles.optionChip, createUserForm.is_active && styles.optionChipActive]}
+                                textStyle={[styles.optionText, createUserForm.is_active && styles.optionTextActive]}
+                            >
+                                {createUserForm.is_active ? 'Active' : 'Inactive'}
+                            </Chip>
+                        </View>
+                        <Text style={styles.helperText}>
+                            Untuk role engineer, isi ID Engineer dan Area Group.
+                        </Text>
+
+                        <View style={styles.modalActionRow}>
+                            <Button mode="outlined" onPress={closeCreateModal} style={styles.modalCancelBtn} disabled={creatingUser}>
+                                Batal
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={addUser}
+                                loading={creatingUser}
+                                disabled={creatingUser}
+                                style={styles.modalSaveBtn}
+                            >
+                                Tambah User
+                            </Button>
+                        </View>
+                    </ScrollView>
+                </Modal>
                 <Modal
                     visible={showManageModal}
                     onDismiss={closeManageModal}
@@ -697,6 +960,13 @@ export default function UsersPage() {
 }
 
 const styles = StyleSheet.create({
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
     search: { backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.border, elevation: 0 },
     filters: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
     filterButton: { borderColor: Colors.border, backgroundColor: Colors.surface },

@@ -42,7 +42,7 @@ export default function ForgotPasswordPage() {
         }
         try {
             await resetPassword(normalizedEmail);
-            setMessage('Link reset password telah dikirim ke email Anda. Silakan cek inbox/spam.');
+            setMessage('Permintaan reset diproses. Jika email terdaftar, link reset akan dikirim. Cek inbox/spam dalam beberapa menit.');
         } catch (e: any) {
             setError(toResetErrorMessage(e));
         }

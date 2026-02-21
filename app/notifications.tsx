@@ -107,12 +107,12 @@ export default function NotificationsPage() {
                 </View>
                 <View style={{ flex: 1, gap: 4 }}>
                     <View style={styles.cardHeader}>
-                        <Text style={[styles.title, !isRead && styles.titleUnread]} numberOfLines={1}>
+                        <Text style={[styles.title, !isRead && styles.titleUnread]}>
                             {item.title}
                         </Text>
                         <Text style={styles.time}>{time}</Text>
                     </View>
-                    <Text style={[styles.body, !isRead && styles.bodyUnread]} numberOfLines={3}>
+                    <Text style={[styles.body, !isRead && styles.bodyUnread]}>
                         {item.body}
                     </Text>
                 </View>
@@ -178,7 +178,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#1F2937',
         alignItems: 'center', justifyContent: 'center'
     },
-    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
     title: { fontSize: 15, fontWeight: '600', color: Colors.text, flex: 1, marginRight: 8 },
     titleUnread: { color: Colors.primary, fontWeight: 'bold' },
     time: { fontSize: 11, color: Colors.textMuted },

@@ -2,8 +2,15 @@ import { createClient, processLock } from '@supabase/supabase-js';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
-const SUPABASE_URL = 'https://karhcwuyppywmqmqppev.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imthcmhjd3V5cHB5d21xbXFwcGV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5NjE2MDgsImV4cCI6MjA4NjUzNzYwOH0.4kXfCrcsTtcxpS6IgoOstQXnGxWLrs7jCt00WU6sMTs';
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error(
+        'Missing Supabase environment variables. ' +
+            'Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in your .env file.',
+    );
+}
 
 const webStorage = {
     getItem: (key: string) => {

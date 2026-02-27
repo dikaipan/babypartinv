@@ -109,8 +109,8 @@ Deno.serve(async (req: Request) => {
         if (!EMAIL_REGEX.test(email)) {
             return json(400, { ok: false, error: 'Format email tidak valid.' });
         }
-        if (password.length < 6) {
-            return json(400, { ok: false, error: 'Password minimal 6 karakter.' });
+        if (password.length < 8) {
+            return json(400, { ok: false, error: 'Password minimal 8 karakter.' });
         }
         if (role === 'engineer' && (!employeeId || !location)) {
             return json(400, { ok: false, error: 'ID Engineer dan Area Group wajib diisi untuk role engineer.' });

@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Konfirmasi Email - BabyPart</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body {
@@ -107,8 +108,7 @@
     </div>
 
     <script>
-        const SUPABASE_URL = 'https://karhcwuyppywmqmqppev.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imthcmhjd3V5cHB5d21xbXFwcGV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA5NjE2MDgsImV4cCI6MjA4NjUzNzYwOH0.4kXfCrcsTtcxpS6IgoOstQXnGxWLrs7jCt00WU6sMTs';
+        const { SUPABASE_URL, SUPABASE_ANON_KEY } = window.BABYPART_CONFIG;
         const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         const content = document.getElementById('content');
@@ -123,12 +123,28 @@
         }
 
         function showError(msg) {
-            content.innerHTML = `
-                <div class="icon">⚠️</div>
-                <h2 style="color:#EF4444">Gagal Verifikasi</h2>
-                <p>${msg}</p>
-                <a href="index.html" class="btn">Kembali ke Beranda</a>
-            `;
+            content.innerHTML = '';
+
+            const icon = document.createElement('div');
+            icon.className = 'icon';
+            icon.textContent = '⚠️';
+
+            const h2 = document.createElement('h2');
+            h2.style.color = '#EF4444';
+            h2.textContent = 'Gagal Verifikasi';
+
+            const p = document.createElement('p');
+            p.textContent = msg; // textContent — never executes HTML
+
+            const a = document.createElement('a');
+            a.href = 'index.html';
+            a.className = 'btn';
+            a.textContent = 'Kembali ke Beranda';
+
+            content.appendChild(icon);
+            content.appendChild(h2);
+            content.appendChild(p);
+            content.appendChild(a);
         }
 
         // Handle OAuth/MagicLink callback

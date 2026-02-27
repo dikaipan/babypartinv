@@ -50,6 +50,8 @@ yarn-error.*
 !app.json
 !package.json
 !tsconfig.json
-!google-services.json
 # Excluding the Firebase Admin SDK specifically
 babypartinv-*.json
+
+# Web-auth runtime config (contains Supabase credentials — use config.example.js as template)
+web-auth/config.js

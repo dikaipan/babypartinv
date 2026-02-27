@@ -9,6 +9,7 @@ type SetPasswordRequest = {
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -96,11 +97,14 @@ Deno.serve(async (req: Request) => {
         if (!targetUserId) {
             return json(400, { ok: false, error: 'userId wajib diisi.' });
         }
+        if (!UUID_REGEX.test(targetUserId)) {
+            return json(400, { ok: false, error: 'Format userId tidak valid.' });
+        }
         if (!password && !email) {
             return json(400, { ok: false, error: 'Minimal salah satu dari password/email wajib diisi.' });
         }
-        if (password && password.length < 6) {
-            return json(400, { ok: false, error: 'Password minimal 6 karakter.' });
+        if (password && password.length < 8) {
+            return json(400, { ok: false, error: 'Password minimal 8 karakter.' });
         }
         if (email && !EMAIL_REGEX.test(email)) {
             return json(400, { ok: false, error: 'Format email tidak valid.' });

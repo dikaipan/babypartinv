@@ -28,8 +28,8 @@ export default function RegisterPage() {
             setError('Nama, Email, Password, ID Engineer, dan Area Group wajib diisi');
             return;
         }
-        if (password.length < 6) {
-            setError('Password minimal 6 karakter');
+        if (password.length < 8) {
+            setError('Password minimal 8 karakter');
             return;
         }
         try {
